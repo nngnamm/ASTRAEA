@@ -1,0 +1,11 @@
+numpy
+requests
+astropy
+astroquery
+reproject
+scipy
+matplotlib
+fastapi
+uvicorn[standard]
+pytest
+httpx

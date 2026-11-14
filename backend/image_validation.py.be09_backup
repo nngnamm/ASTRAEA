@@ -1,0 +1,121 @@
+"""Structural validation for SPHEREx FITS image products.
+
+This module checks whether an image product is structurally usable by the
+pipeline. It deliberately does not interpret individual quality-flag bits;
+those must be decoded using the official documentation for the exact data
+release and product type before any flag-based masking is applied.
+"""
+from __future__ import annotations
+
+import numpy as np
+from astropy.wcs import WCS
+
+
+def validate_image_payload(image, flags, header, expected_detector=None):
+    """Validate image, flags, essential headers, and celestial WCS.
+
+    Returns a JSON-serializable report. ``valid`` means the structural checks
+    passed; it is not a claim that the observation is scientifically calibrated
+    or free from contamination.
+    """
+    errors = []
+    warnings = []
+
+    if image is None:
+        errors.append("IMAGE extension has no data.")
+        image_array = None
+    else:
+        try:
+            image_array = np.asarray(image)
+            if image_array.ndim != 2:
+                errors.append(f"IMAGE data must be 2-D; received {image_array.ndim}-D.")
+            elif image_array.size == 0 or min(image_array.shape) < 2:
+                errors.append("IMAGE data is empty or too small.")
+            elif not np.issubdtype(image_array.dtype, np.number):
+                errors.append("IMAGE data must have a numeric data type.")
+        except Exception as exc:
+            image_array = None
+            errors.append(f"IMAGE data could not be interpreted: {exc}")
+
+    finite_fraction = None
+    if image_array is not None and image_array.ndim == 2 and image_array.size:
+        try:
+            finite_mask = np.isfinite(image_array)
+            finite_fraction = float(finite_mask.mean())
+            if not finite_mask.any():
+                errors.append("IMAGE data contains no finite pixels.")
+            elif finite_fraction < 1.0:
+                warnings.append(
+                    "IMAGE contains non-finite pixels; downstream processing must preserve the mask."
+                )
+        except TypeError:
+            errors.append("IMAGE data cannot be checked for finite numeric pixels.")
+
+    flags_shape = None
+    if flags is None:
+        errors.append("Required FLAGS extension is missing or has no data.")
+    else:
+        try:
+            flags_array = np.asarray(flags)
+            flags_shape = list(flags_array.shape)
+            if flags_array.ndim != 2:
+                errors.append(f"FLAGS data must be 2-D; received {flags_array.ndim}-D.")
+            if not np.issubdtype(flags_array.dtype, np.number):
+                errors.append("FLAGS data must have a numeric data type.")
+            if image_array is not None and flags_array.shape != image_array.shape:
+                errors.append(
+                    f"FLAGS shape {flags_array.shape} does not match IMAGE shape {image_array.shape}."
+                )
+        except Exception as exc:
+            errors.append(f"FLAGS data could not be interpreted: {exc}")
+
+    detector = None
+    mjd_avg = None
+    try:
+        detector = int(header["DETECTOR"])
+        if detector not in range(1, 7):
+            errors.append(f"DETECTOR must be between 1 and 6; received {detector}.")
+        if expected_detector is not None and detector != int(expected_detector):
+            errors.append(
+                f"FITS DETECTOR={detector} does not match queried detector={expected_detector}."
+            )
+    except Exception:
+        errors.append("IMAGE header is missing a valid DETECTOR value.")
+
+    try:
+        mjd_avg = float(header["MJD-AVG"])
+        if not np.isfinite(mjd_avg) or mjd_avg <= 0:
+            errors.append(f"MJD-AVG must be a finite positive number; received {mjd_avg}.")
+    except Exception:
+        errors.append("IMAGE header is missing a valid MJD-AVG value.")
+
+    wcs_valid = False
+    if image_array is not None and image_array.ndim == 2:
+        try:
+            celestial_wcs = WCS(header, relax=True).celestial
+            if not celestial_wcs.has_celestial or celestial_wcs.pixel_n_dim != 2:
+                raise ValueError("WCS does not describe a two-dimensional celestial image.")
+            center_x = (image_array.shape[1] - 1) / 2.0
+            center_y = (image_array.shape[0] - 1) / 2.0
+            world = celestial_wcs.pixel_to_world_values(center_x, center_y)
+            if len(world) < 2 or not all(np.isfinite(float(value)) for value in world[:2]):
+                raise ValueError("WCS maps the image center to non-finite coordinates.")
+            wcs_valid = True
+        except Exception as exc:
+            errors.append(f"Invalid celestial WCS: {exc}")
+
+    valid = not errors
+    return {
+        "valid": valid,
+        "status": "valid" if valid else "invalid",
+        "errors": errors,
+        "warnings": warnings,
+        "detector": detector,
+        "mjd_avg": mjd_avg,
+        "image_shape": list(image_array.shape) if image_array is not None else None,
+        "image_dtype": str(image_array.dtype) if image_array is not None else None,
+        "finite_pixel_fraction": round(finite_fraction, 6) if finite_fraction is not None else None,
+        "flags_shape": flags_shape,
+        "wcs_valid": wcs_valid,
+        "quality_flags_decoded": False,
+    }

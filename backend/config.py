@@ -1,0 +1,140 @@
+import os
+
+COLLECTIONS = ["spherex_dr1", "spherex_qr3"]
+CACHE_DIR = "cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+BANDS = {
+    1: (0.75, 1.09),
+    2: (1.10, 1.62),
+    3: (1.63, 2.41),
+    4: (2.42, 3.82),
+    5: (3.83, 4.41),
+    6: (4.42, 5.00),
+}
+
+# Verified NASA Space Apps 2026 Benchmark Targets
+TARGETS = {
+    "barnard": {
+        "name": "Barnard's Star",
+        "category": "High Proper Motion Star",
+        "test_case": "Proper Motion",
+        "ra": 269.452077,
+        "dec": 4.693365,
+        "epoch": 2000.0,
+        "pm_ra_arcsec_yr": -0.8015,
+        "pm_dec_arcsec_yr": 10.3624,
+        "aliases": [
+            "barnard",
+            "barnard's star",
+            "barnards star",
+            "gj 699",
+            "hip 87937",
+        ],
+        "data_status": "verified_available",
+        "recommended_detectors": [5, 6],
+        "irsa_audit": {
+            "total_observations": 386,
+            "baseline_days": 402.8,
+            "by_detector": {1: 64, 2: 67, 3: 63, 4: 62, 5: 68, 6: 62},
+            "visit_groups_30d": {"D1": 3, "D2": 3, "D3": 4, "D4": 3, "D5": 3, "D6": 4},
+        },
+    },
+    "eps_ind_b": {
+        "name": "Epsilon Indi B",
+        "category": "Binary Brown Dwarf System",
+        "test_case": "Brown Dwarf Binary System",
+        "ra": 331.044147,
+        "dec": -56.782844,
+        "epoch": 2000.0,
+        "pm_ra_arcsec_yr": 3.9614,
+        "pm_dec_arcsec_yr": -2.5383,
+        "aliases": [
+            "eps_ind_b",
+            "epsilon indi b",
+            "eps ind b",
+            "hd 209100 b",
+        ],
+        "data_status": "verified_available",
+        "recommended_detectors": [5, 6],
+        "irsa_audit": {
+            "total_observations": 486,
+            "baseline_days": 525.6,
+            "by_detector": {1: 51, 2: 97, 3: 103, 4: 49, 5: 88, 6: 98},
+            "visit_groups_30d": {"D1": 3, "D2": 5, "D3": 4, "D4": 3, "D5": 5, "D6": 4},
+        },
+    },
+    "wise0855": {
+        "name": "WISE 0855-0714",
+        "category": "Fast-Moving Y-type Brown Dwarf (~250 K)",
+        "test_case": "Fast-moving Brown Dwarf",
+        "ra": 133.795129,
+        "dec": -7.245147,
+        "epoch": 2010.5,
+        "pm_ra_arcsec_yr": -8.118,
+        "pm_dec_arcsec_yr": 0.680,
+        "aliases": [
+            "wise0855",
+            "wise 0855",
+            "wise 0855-0714",
+            "wise j085510.83-071442.5",
+            "wise j0855-0714",
+        ],
+        "data_status": "verified_available",
+        "recommended_detectors": [5, 6],
+        "irsa_audit": {
+            "total_observations": 263,
+            "baseline_days": 373.6,
+            "by_detector": {1: 37, 2: 48, 3: 46, 4: 38, 5: 49, 6: 45},
+            "visit_groups_30d": {"D1": 3, "D2": 4, "D3": 3, "D4": 3, "D5": 4, "D6": 3},
+        },
+    },
+    "rw_aur": {
+        "name": "RW Aurigae",
+        "category": "T Tauri Variable Star",
+        "test_case": "Variable Star",
+        "ra": 76.956526,
+        "dec": 30.401438,
+        "epoch": 2000.0,
+        "pm_ra_arcsec_yr": 0.003,
+        "pm_dec_arcsec_yr": -0.024,
+        "aliases": [
+            "rw_aur",
+            "rw aurigae",
+            "rw aur",
+            "hd 240764",
+        ],
+        "data_status": "verified_available",
+        "recommended_detectors": [1, 2, 3, 4, 5, 6],
+        "irsa_audit": {
+            "total_observations": 342,
+            "baseline_days": 380.5,
+            "by_detector": {1: 57, 2: 57, 3: 57, 4: 57, 5: 57, 6: 57},
+            "visit_groups_30d": {"D1": 3, "D2": 3, "D3": 3, "D4": 3, "D5": 3, "D6": 3},
+        },
+    },
+    "r_dra": {
+        "name": "R Draconis",
+        "category": "Mira Cet Variable Star",
+        "test_case": "Variable Star",
+        "ra": 248.167611,
+        "dec": 66.754979,
+        "epoch": 2000.0,
+        "pm_ra_arcsec_yr": -0.006,
+        "pm_dec_arcsec_yr": -0.033,
+        "aliases": [
+            "r_dra",
+            "r draconis",
+            "r dra",
+            "hd 150072",
+        ],
+        "data_status": "verified_available",
+        "recommended_detectors": [1, 2, 3, 4, 5, 6],
+        "irsa_audit": {
+            "total_observations": 578,
+            "baseline_days": 425.9,
+            "by_detector": {1: 93, 2: 95, 3: 102, 4: 92, 5: 94, 6: 102},
+            "visit_groups_30d": {"D1": 3, "D2": 3, "D3": 3, "D4": 3, "D5": 3, "D6": 3},
+        },
+    },
+}

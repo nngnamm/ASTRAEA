@@ -1,0 +1,48 @@
+import os
+
+COLLECTIONS = ["spherex_dr1", "spherex_qr3"]
+CACHE_DIR = "cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+BANDS = {
+    1: (0.75, 1.09),
+    2: (1.10, 1.62),
+    3: (1.63, 2.41),
+    4: (2.42, 3.82),
+    5: (3.83, 4.41),
+    6: (4.42, 5.00),
+}
+
+# Verified NASA Space Apps 2026 Benchmark Targets
+TARGETS = {
+    "barnard": {
+        "name": "Barnard's Star",
+        "category": "High Proper Motion Star",
+        "ra": 269.452077, "dec": 4.693365, "epoch": 2000.0,
+        "pm_ra_arcsec_yr": -0.8015, "pm_dec_arcsec_yr": 10.3624
+    },
+    "eps_ind_b": {
+        "name": "Epsilon Indi B",
+        "category": "Binary Brown Dwarf System",
+        "ra": 331.044147, "dec": -56.782844, "epoch": 2000.0,
+        "pm_ra_arcsec_yr": 3.9614, "pm_dec_arcsec_yr": -2.5383
+    },
+    "wise0855": {
+        "name": "WISE 0855-0714",
+        "category": "Fast-Moving Y-type Brown Dwarf (~250 K)",
+        "ra": 133.795129, "dec": -7.245147, "epoch": 2010.5,
+        "pm_ra_arcsec_yr": -8.118, "pm_dec_arcsec_yr": 0.680
+    },
+    "rw_aur": {
+        "name": "RW Aurigae",
+        "category": "T Tauri Variable Star",
+        "ra": 76.956526, "dec": 30.401438, "epoch": 2000.0,
+        "pm_ra_arcsec_yr": 0.003, "pm_dec_arcsec_yr": -0.024
+    },
+    "r_dra": {
+        "name": "R Draconis",
+        "category": "Mira Cet Variable Star",
+        "ra": 248.167611, "dec": 66.754979, "epoch": 2000.0,
+        "pm_ra_arcsec_yr": -0.006, "pm_dec_arcsec_yr": -0.033
+    }
+}

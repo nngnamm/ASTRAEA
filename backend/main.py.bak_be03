@@ -1,0 +1,46 @@
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from config import TARGETS, BANDS
+from spherex_core import propagate_coords, build_cube, compute_spectrum
+from serializers import package_cube_json
+
+app = FastAPI(title="Project Astraea SPHEREx API")
+
+# Enable CORS so React+Vite (localhost:5173) can call this backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/targets")
+def get_targets():
+    out = {}
+    for key, t in TARGETS.items():
+        ra_now, dec_now = propagate_coords(
+            t["ra"], t["dec"], t["pm_ra_arcsec_yr"], t["pm_dec_arcsec_yr"], t["epoch"]
+        )
+        out[key] = {**t, "ra_2026": round(ra_now, 6), "dec_2026": round(dec_now, 6)}
+    return {"targets": out, "bands_um": BANDS}
+
+@app.get("/api/frames")
+def get_frames(
+    ra: float = Query(..., description="Right Ascension in degrees"),
+    dec: float = Query(..., description="Declination in degrees"),
+    fov: float = Query(0.1, ge=0.03, le=0.3, description="Field of view in degrees"),
+    detectors: str = Query("5,6", description="Comma-separated detector numbers, e.g. 5,6"),
+    max_frames: int = Query(30, ge=4, le=80)
+):
+    det_tuple = tuple(int(x.strip()) for x in detectors.split(",") if x.strip().isdigit())
+    cube = build_cube(ra, dec, fov_deg=fov, detectors=det_tuple, max_frames=max_frames)
+    return package_cube_json(cube)
+
+@app.get("/api/spectrum")
+def get_spectrum(
+    ra: float = Query(..., description="Right Ascension in degrees"),
+    dec: float = Query(..., description="Declination in degrees"),
+    fov: float = Query(0.1, ge=0.03, le=0.3)
+):
+    spec = compute_spectrum(ra, dec, fov_deg=fov)
+    return {"center": {"ra": ra, "dec": dec}, "spectrum": spec}
