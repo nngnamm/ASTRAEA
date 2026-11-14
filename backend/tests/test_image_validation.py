@@ -171,3 +171,29 @@ def test_variance_shape_mismatch_fails_full_product_validation():
     )
     assert result["valid"] is False
     assert any("VARIANCE shape" in error for error in result["errors"])
+
+
+def test_negative_and_zero_variance_reported_and_suitability_separated():
+    image = np.ones((4, 4), dtype=np.float32)
+    flags = np.zeros((4, 4), dtype=np.int32)
+    variance = np.ones((4, 4), dtype=np.float32)
+    variance[0, 0] = 0.0
+    variance[0, 1] = -1.5
+
+    result = validate_image_payload(
+        image,
+        flags,
+        make_valid_header(),
+        variance=variance,
+        zodi=np.ones((4, 4), dtype=np.float32),
+        require_full_product=True,
+    )
+    assert result["valid"] is True
+    assert result["structural_validity"]["valid"] is True
+    assert result["numerical_validity"]["valid"] is True
+    assert result["numerical_validity"]["variance_zero_count"] == 1
+    assert result["numerical_validity"]["variance_negative_count"] == 1
+    assert result["alignment_validity"]["wcs_valid"] is True
+    # Negative variance makes uncertainty_weighted_photometry unsuitable while visual_display remains suitable
+    assert result["scientific_operation_suitability"]["visual_display"] is True
+    assert result["scientific_operation_suitability"]["uncertainty_weighted_photometry"] is False

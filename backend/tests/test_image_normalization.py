@@ -34,6 +34,35 @@ def test_normalize_frame_removes_zodi_and_preserves_source_flux_amplitude():
     assert np.isclose(np.nanmax(frame["normalized"]), 50.0, rtol=1e-2)
 
 
+def test_normalize_frame_excludes_flagged_source_and_defect_pixels_from_sky_pedestal():
+    # Create a 10x10 cutout where 60% of pixels are contaminated by a +20.0 MJy/sr source halo
+    # that is marked in FLAGS (bit 21 = SOURCE), while true unflagged sky is at 1.5 MJy/sr.
+    aligned = np.full((10, 10), 1.5, dtype=float)
+    flags = np.zeros((10, 10), dtype=np.int32)
+    aligned[:6, :] = 21.5
+    flags[:6, :] = 1 << 21
+
+    frame = {
+        "aligned": aligned,
+        "valid_mask": np.isfinite(aligned),
+        "flags": flags,
+        "validation": {
+            "flag_definitions": [
+                {"bit": 21, "name": "SOURCE", "flagged_fraction": 0.60},
+            ]
+        },
+    }
+    normalize_frame_background(frame)
+    norm_meta = frame["validation"]["normalization"]
+    assert norm_meta["flag_aware_sky_estimation"] is True
+    assert norm_meta["sky_estimation_mask_policy"] == "unflagged_sky_pixels"
+    assert norm_meta["flagged_pixels_excluded_from_sky"] == 60
+    # True sky (1.5 MJy/sr) is removed, not the biased median (21.5 MJy/sr)
+    assert np.isclose(norm_meta["residual_pedestal_removed_mjy_sr"], 1.5, atol=1e-6)
+    assert np.allclose(frame["normalized"][6:, :], 0.0, atol=1e-6)
+    assert np.allclose(frame["normalized"][:6, :], 20.0, atol=1e-6)
+
+
 def test_normalize_frame_preserves_nan_outside_valid_mask():
     aligned = np.full((10, 10), 2.5, dtype=float)
     aligned[:4, :] = np.nan

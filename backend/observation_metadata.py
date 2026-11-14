@@ -107,6 +107,10 @@ def extract_observation_metadata(
     collection: str | None = None,
     wcs_valid: bool | None = None,
     wcs_wave: Any = None,
+    sha256: str | None = None,
+    cache_filename: str | None = None,
+    access_url: str | None = None,
+    from_cache: bool | None = None,
 ) -> dict[str, Any]:
     """Return compact metadata for one SPHEREx spectral-image observation.
 
@@ -134,7 +138,11 @@ def extract_observation_metadata(
             l2_counters[normalized] = int(number) if number.is_integer() else number
 
     return {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
+        "dataset_identity": "SPHEREx",
+        "archive_source": "NASA/IPAC IRSA",
+        "official_archive_url": "https://irsa.ipac.caltech.edu/Missions/spherex.html",
+        "is_derived_product": False,
         "observation": {
             "observation_id": _text(image_header, "OBSID"),
             "exposure_id": _text(image_header, "EXPIDN"),
@@ -151,6 +159,7 @@ def extract_observation_metadata(
             "midpoint_utc": _text(image_header, "DATE-AVG"),
             "end_mjd": _number(image_header, "MJD-END"),
             "end_utc": _text(image_header, "DATE-END"),
+            "chronological_sort_key": "MJD-AVG",
         },
         "exposure": {
             "integration_seconds": _number(image_header, "XPOSURE"),
@@ -159,8 +168,13 @@ def extract_observation_metadata(
         },
         "product": {
             "created_utc": _text(image_header, "DATE"),
+            "created_utc_note": "Archive product generation date (DATE), not astronomical observation date.",
             "image_unit": _text(image_header, "BUNIT"),
             "image_shape_yx": shape,
+            "sha256": sha256,
+            "cache_filename": cache_filename,
+            "access_url": access_url,
+            "from_cache": from_cache,
         },
         "spatial_reference": {
             "coordinate_system": _text(image_header, "RADESYS"),

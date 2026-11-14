@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from serializers import _difference_for_detector
 from spherex_core import (
     coadd,
     compute_difference_with_diagnostics,
@@ -9,12 +10,20 @@ from spherex_core import (
 )
 
 
-def make_frame(detector: int, mjd: float, image: np.ndarray, obsid: str | None = None) -> dict:
+def make_frame(
+    detector: int,
+    mjd: float,
+    image: np.ndarray,
+    obsid: str | None = None,
+    variance: np.ndarray | None = None,
+) -> dict:
     frame = {
         "detector": detector,
         "time": mjd,
         "aligned": np.asarray(image, dtype=float),
     }
+    if variance is not None:
+        frame["aligned_variance"] = np.asarray(variance, dtype=float)
     if obsid is not None:
         frame["metadata"] = {"observation": {"observation_id": obsid}}
         frame["header"] = {"OBSID": obsid}
@@ -112,6 +121,41 @@ def test_difference_preserves_nan_outside_common_mask_and_records_diagnostics():
     assert diag["early_observation_ids"] == ["OBS-EARLY-1", "OBS-EARLY-2"]
     assert diag["late_observation_ids"] == ["OBS-LATE-1"]
     assert diag["uncovered_pixel_policy"] == "preserved_as_nan"
+    assert diag["variance_propagated"] is False
+
+
+def test_difference_propagates_variance_when_available():
+    img_a = np.ones((6, 6), dtype=float) * 5.0
+    img_b = np.ones((6, 6), dtype=float) * 5.0
+    img_b[3, 3] = 12.0
+    var_a = np.full((6, 6), 0.09, dtype=float)  # sigma_a = 0.3
+    var_b = np.full((6, 6), 0.16, dtype=float)  # sigma_b = 0.4 -> quadrature diff sigma = 0.5
+
+    _, _, _, diag = compute_difference_with_diagnostics(
+        [make_frame(5, 100.0, img_a, variance=var_a)],
+        [make_frame(5, 200.0, img_b, variance=var_b)],
+        detector=5,
+    )
+    assert diag["variance_propagated"] is True
+    assert np.isclose(diag["median_propagated_sigma_mjy_sr"], 0.5, atol=1e-5)
+
+
+def test_difference_for_detector_does_not_silently_fallback_to_low_coverage_epochs():
+    # Epoch 1 has 100% coverage; Epoch 2 has only 20% coverage (< 50% threshold)
+    full_img = np.ones((10, 10), dtype=float)
+    low_cov_img = np.full((10, 10), np.nan, dtype=float)
+    low_cov_img[:2, :] = 1.0  # 20/100 = 0.20 coverage
+
+    epochs = [
+        [make_frame(5, 100.0, full_img)],
+        [make_frame(5, 200.0, low_cov_img)],
+    ]
+    res = _difference_for_detector(5, epochs, min_epoch_coverage=0.50)
+    assert res["status"] == "ineligible_low_coverage"
+    assert res["comparison_eligible"] is False
+    assert res["n_epochs"] == 2
+    assert res["n_eligible_epochs"] == 1
+    assert res["png_b64"] is None
 
 
 def test_background_pedestal_computed_strictly_over_common_mask():
