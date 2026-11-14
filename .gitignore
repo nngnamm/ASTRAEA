@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+backend/.venv/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime cache and temporary atomic download files
+*.tmp.*
+*.corrupt*
+backend/cache/sia_*.json
+backend/cache/*.tmp*
+backend/cache/*.corrupt*
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Backup clutter
+*.bak*
+*_backup.py
+*_before_*.py
+
+# Frontend build / dependencies
+node_modules/
+dist/
+build/

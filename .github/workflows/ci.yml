@@ -1,0 +1,43 @@
+name: Backend Scientific & Provenance CI
+
+on:
+  push:
+    branches: ["main", "cleanup"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  backend-tests:
+    name: Deterministic Offline Backend & Provenance Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run deterministic unit and local FITS provenance test suite
+        env:
+          MPLCONFIGDIR: /tmp/mplconfig
+        run: |
+          pytest -v -m "not live_irsa"
+
+      - name: Run offline benchmark target provenance audit
+        env:
+          MPLCONFIGDIR: /tmp/mplconfig
+        run: |
+          python backend/diagnostics/audit_benchmark_targets.py --json /tmp/benchmark_audit.json

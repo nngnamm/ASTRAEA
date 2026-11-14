@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.time import Time
 from analytics import compute_sky_health, detect_anomalies
+from config import MIN_COMMON_COVERAGE, MIN_EPOCH_COVERAGE
 from spherex_core import (
     coadd,
     compute_difference_with_diagnostics,
@@ -15,7 +16,12 @@ from spherex_core import (
 
 
 def array_to_b64png(arr, vmin=None, vmax=None, cmap_name="gray"):
-    """Encode a 2-D array as a PNG data URI, safely handling NaN pixels."""
+    """Encode a 2-D array as a PNG data URI with transparent RGBA for NaN pixels.
+
+    Uncovered or invalid (non-finite) pixels are rendered with RGBA ``[0, 0, 0, 0]``
+    (alpha = 0) so they are never mistaken for zero-flux black sky or negative
+    difference residuals.
+    """
     image = np.asarray(arr, dtype=float)
     if image.ndim != 2:
         raise ValueError("PNG image input must be a 2-D array")
@@ -38,9 +44,13 @@ def array_to_b64png(arr, vmin=None, vmax=None, cmap_name="gray"):
         vmin, vmax = center - scale, center + scale
 
     flipped = np.flipud(image)
-    norm = np.clip((flipped - vmin) / (vmax - vmin), 0.0, 1.0)
-    norm = np.nan_to_num(norm, nan=0.0, posinf=1.0, neginf=0.0)
-    rgba = (matplotlib.colormaps[cmap_name](norm) * 255).astype(np.uint8)
+    invalid_mask = ~np.isfinite(flipped)
+    with np.errstate(all="ignore"):
+        norm = np.clip((flipped - vmin) / (vmax - vmin), 0.0, 1.0)
+    norm_safe = np.nan_to_num(norm, nan=0.0, posinf=1.0, neginf=0.0)
+    rgba = (matplotlib.colormaps[cmap_name](norm_safe) * 255).astype(np.uint8)
+    if np.any(invalid_mask):
+        rgba[invalid_mask] = np.array([0, 0, 0, 0], dtype=np.uint8)
 
     buffer = io.BytesIO()
     plt.imsave(buffer, rgba, format="png")
@@ -101,7 +111,7 @@ def _epoch_coverage_fraction(epoch):
 def _epoch_summary(epoch, detector, epoch_index, display_limits=None):
     times = [float(frame["time"]) for frame in epoch]
     mean_mjd = float(np.mean(times))
-    image = coadd(epoch)
+    image = np.asarray(coadd(epoch), dtype=float)
     valid_pixel_fraction = (
         round(float(np.isfinite(image).mean()), 6) if image.size > 0 else 0.0
     )
@@ -110,8 +120,22 @@ def _epoch_summary(epoch, detector, epoch_index, display_limits=None):
         if display_limits
         else (None, None)
     )
+    input_obs_ids = [
+        f.get("metadata", {}).get("observation", {}).get("observation_id")
+        for f in epoch
+        if f.get("metadata", {}).get("observation", {}).get("observation_id")
+    ]
     return {
         "epoch_id": epoch_index,
+        "dataset_identity": "SPHEREx",
+        "is_derived_image": True,
+        "data_lineage": {
+            "dataset_identity": "SPHEREx",
+            "is_derived_product": True,
+            "derivation_method": "median_coadd_of_tan_reprojected_zodi_sky_subtracted_frames",
+            "input_observation_ids": input_obs_ids,
+            "input_frame_count": len(epoch),
+        },
         "detector": int(detector),
         "mjd_mean": round(mean_mjd, 4),
         "mjd_start": round(min(times), 4),
@@ -120,41 +144,74 @@ def _epoch_summary(epoch, detector, epoch_index, display_limits=None):
         "n_frames": len(epoch),
         "single_frame_epoch": len(epoch) == 1,
         "grouping_heuristic_gap_days": 30,
+        "image_shape_yx": [int(image.shape[0]), int(image.shape[1])],
         "valid_pixel_fraction": valid_pixel_fraction,
         "display_limits_mjy_sr": [vmin, vmax] if vmin is not None else None,
+        "invalid_pixel_rendering": "transparent_rgba_alpha_0",
         "png_b64": array_to_b64png(image, vmin=vmin, vmax=vmax, cmap_name="gray"),
     }
 
 
 def _difference_for_detector(
-    detector, detector_epochs, min_epoch_coverage=0.50, cube_grid=None
+    detector,
+    detector_epochs,
+    min_epoch_coverage=MIN_EPOCH_COVERAGE,
+    min_common_coverage=MIN_COMMON_COVERAGE,
+    cube_grid=None,
 ):
-    """Build a coverage-aware first-versus-last epoch comparison for one detector."""
+    """Build a coverage-aware first-versus-last epoch comparison for one detector.
+
+    Enforces scientific comparison eligibility strictly: never silently lowers
+    ``min_epoch_coverage`` by falling back to low-coverage partial epochs.
+    """
     if len(detector_epochs) < 2:
         return {
             "detector": int(detector),
             "status": "insufficient_epochs",
+            "comparison_eligible": False,
             "message": "At least two time-separated epochs are required.",
             "n_epochs": len(detector_epochs),
+            "n_eligible_epochs": len(detector_epochs),
+            "min_epoch_coverage_required": float(min_epoch_coverage),
             "png_b64": None,
         }
 
+    epoch_coverages = [_epoch_coverage_fraction(ep) for ep in detector_epochs]
     well_covered_epochs = [
         epoch
-        for epoch in detector_epochs
-        if _epoch_coverage_fraction(epoch) >= float(min_epoch_coverage)
+        for epoch, cov in zip(detector_epochs, epoch_coverages)
+        if cov >= float(min_epoch_coverage)
     ]
-    selected_epochs = (
-        well_covered_epochs if len(well_covered_epochs) >= 2 else detector_epochs
-    )
-    early_epoch = selected_epochs[0]
-    late_epoch = selected_epochs[-1]
+
+    if len(well_covered_epochs) < 2:
+        return {
+            "detector": int(detector),
+            "status": "ineligible_low_coverage",
+            "comparison_eligible": False,
+            "message": (
+                f"Fewer than two epochs meet the minimum spatial coverage threshold "
+                f"({min_epoch_coverage:.0%}); found {len(well_covered_epochs)} eligible "
+                f"of {len(detector_epochs)} epochs."
+            ),
+            "n_epochs": len(detector_epochs),
+            "n_eligible_epochs": len(well_covered_epochs),
+            "min_epoch_coverage_required": float(min_epoch_coverage),
+            "epoch_coverage_fractions": epoch_coverages,
+            "png_b64": None,
+        }
+
+    early_epoch = well_covered_epochs[0]
+    late_epoch = well_covered_epochs[-1]
     early_mjd = float(np.mean([frame["time"] for frame in early_epoch]))
     late_mjd = float(np.mean([frame["time"] for frame in late_epoch]))
+    comparison_mid_mjd = 0.5 * (early_mjd + late_mjd)
 
     try:
         diff, img_a_sub, img_b_sub, diagnostics = compute_difference_with_diagnostics(
-            early_epoch, late_epoch, detector=int(detector)
+            early_epoch,
+            late_epoch,
+            detector=int(detector),
+            min_common_coverage=float(min_common_coverage),
         )
         finite = np.abs(diff[np.isfinite(diff)])
         if finite.size == 0:
@@ -172,15 +229,25 @@ def _difference_for_detector(
         return {
             "detector": int(detector),
             "status": "processing_error",
+            "comparison_eligible": False,
             "message": str(exc),
             "n_epochs": len(detector_epochs),
+            "n_eligible_epochs": len(well_covered_epochs),
+            "min_epoch_coverage_required": float(min_epoch_coverage),
+            "min_common_coverage_required": float(min_common_coverage),
             "png_b64": None,
         }
 
     candidates = []
     if cube_grid is not None:
         try:
-            candidates = detect_anomalies(diff, img_a_sub, img_b_sub, cube_grid)
+            candidates = detect_anomalies(
+                diff,
+                img_a_sub,
+                img_b_sub,
+                cube_grid,
+                reference_mjd=comparison_mid_mjd,
+            )
         except Exception:
             candidates = []
 
@@ -213,15 +280,40 @@ def _difference_for_detector(
             "LVF bandpass shift may introduce chromatic residuals."
         )
 
+    early_obs_ids = [
+        f.get("metadata", {}).get("observation", {}).get("observation_id")
+        for f in early_epoch
+        if f.get("metadata", {}).get("observation", {}).get("observation_id")
+    ]
+    late_obs_ids = [
+        f.get("metadata", {}).get("observation", {}).get("observation_id")
+        for f in late_epoch
+        if f.get("metadata", {}).get("observation", {}).get("observation_id")
+    ]
+
     return {
         "detector": int(detector),
+        "dataset_identity": "SPHEREx",
+        "is_derived_image": True,
+        "data_lineage": {
+            "dataset_identity": "SPHEREx",
+            "is_derived_product": True,
+            "derivation_method": "late_epoch_median_coadd_minus_early_epoch_median_coadd",
+            "early_input_observation_ids": early_obs_ids,
+            "late_input_observation_ids": late_obs_ids,
+        },
         "status": "available",
+        "comparison_eligible": True,
+        "min_epoch_coverage_required": float(min_epoch_coverage),
+        "min_common_coverage_required": float(min_common_coverage),
         "mjd_early": round(early_mjd, 4),
         "mjd_late": round(late_mjd, 4),
         "baseline_days": round(late_mjd - early_mjd, 2),
         "n_epochs": len(detector_epochs),
+        "n_eligible_epochs": len(well_covered_epochs),
         "n_frames_early": early_count,
         "n_frames_late": late_count,
+        "image_shape_yx": [int(diff.shape[0]), int(diff.shape[1])],
         "common_valid_pixel_fraction": common_valid_pixel_fraction,
         "target_covered_in_difference": target_covered_in_difference,
         "difference_noise_mad_mjy_sr": difference_noise_mad_mjy_sr,
@@ -232,6 +324,7 @@ def _difference_for_detector(
         else "multi_frame_epochs",
         "warnings": warnings,
         "vlim_mjy_sr": round(vlim, 6),
+        "invalid_pixel_rendering": "transparent_rgba_alpha_0",
         "png_b64": png,
     }
 
@@ -245,10 +338,12 @@ def package_cube_json(cube):
     """
     frames = cube.get("frames", [])
     if not frames:
+        cube_status = cube.get("status", "empty")
         return {
-            "status": "empty",
+            "status": cube_status if cube_status in {"empty", "error"} else "empty",
             "error_code": cube.get("error_code", "no_observations"),
             "error": cube.get("message", "No frames found"),
+            "message": cube.get("message", "No frames found"),
             "frames": [],
             "epochs": [],
             "differences": [],
@@ -263,16 +358,36 @@ def package_cube_json(cube):
         mjd = float(frame["time"])
         det = int(frame["detector"])
         vmin, vmax = display_limits.get(det, (None, None))
-        render_arr = frame.get("normalized", frame["aligned"])
+        render_arr = np.asarray(frame.get("normalized", frame["aligned"]), dtype=float)
+        cov_frac = (
+            round(float(np.isfinite(render_arr).mean()), 6)
+            if render_arr.size > 0
+            else 0.0
+        )
+        obs_id = (
+            frame.get("metadata", {}).get("observation", {}).get("observation_id")
+        )
         frames_out.append(
             {
                 "index": index,
+                "dataset_identity": "SPHEREx",
+                "is_derived_image": True,
+                "data_lineage": {
+                    "dataset_identity": "SPHEREx",
+                    "original_observation_id": obs_id,
+                    "original_fits_is_derived_product": False,
+                    "rendered_image_is_derived_product": True,
+                    "derivation_method": "icrs_tan_wcs_reprojection_plus_zodi_and_sky_pedestal_subtraction",
+                },
                 "mjd": round(mjd, 4),
                 "iso_date": Time(mjd, format="mjd").isot[:10],
                 "detector": det,
                 "wave_um": round(float(frame.get("wave_um", 0.0)), 3),
                 "collection": frame.get("collection"),
+                "image_shape_yx": [int(render_arr.shape[0]), int(render_arr.shape[1])],
+                "coverage_fraction": cov_frac,
                 "display_limits_mjy_sr": [vmin, vmax] if vmin is not None else None,
+                "invalid_pixel_rendering": "transparent_rgba_alpha_0",
                 "metadata": frame.get("metadata", {}),
                 "validation": frame.get("validation", {}),
                 "png_b64": array_to_b64png(
@@ -307,9 +422,21 @@ def package_cube_json(cube):
         primary = dict(available_differences[0])
         difference_out = {**primary, "by_detector": differences_out}
     else:
+        ineligible = [
+            item
+            for item in differences_out
+            if item.get("status") == "ineligible_low_coverage"
+        ]
         difference_out = {
-            "status": "insufficient_observations",
-            "message": "No detector has two time-separated epochs.",
+            "status": "ineligible_low_coverage"
+            if ineligible
+            else "insufficient_observations",
+            "comparison_eligible": False,
+            "message": (
+                ineligible[0]["message"]
+                if ineligible
+                else "No detector has two time-separated epochs."
+            ),
             "png_b64": None,
             "by_detector": differences_out,
         }
@@ -322,13 +449,37 @@ def package_cube_json(cube):
     }
 
     center = cube.get("center", (None, None))
+    n_grid = cube.get("n")
+    pix_scale = (
+        round(float(cube["pix_arcsec"]), 3)
+        if cube.get("pix_arcsec") is not None
+        else None
+    )
     return {
         "status": "ok",
+        "dataset_identity": "SPHEREx",
+        "archive_source": "NASA/IPAC IRSA",
+        "official_archive_url": "https://irsa.ipac.caltech.edu/Missions/spherex.html",
         "center": {"ra": center[0], "dec": center[1]},
-        "grid_size_px": cube.get("n"),
-        "pix_scale_arcsec": round(float(cube["pix_arcsec"]), 3)
-        if cube.get("pix_arcsec") is not None
-        else None,
+        "grid_size_px": n_grid,
+        "pix_scale_arcsec": pix_scale,
+        "wcs_summary": {
+            "reference_frame": "ICRS",
+            "projection": "TAN",
+            "crval_ra_deg": center[0],
+            "crval_dec_deg": center[1],
+            "grid_shape_yx": [n_grid, n_grid] if n_grid is not None else None,
+            "pix_scale_arcsec": pix_scale,
+            "orientation": "North-up, East-left",
+        },
+        "processing_history": [
+            "irsa_sia_query",
+            "fits_structural_and_quality_validation",
+            "icrs_tan_wcs_reprojection",
+            "zodi_and_flag_aware_sky_pedestal_subtraction",
+            "detector_separated_epoch_coadd",
+            "joint_mask_difference_and_anomaly_detection",
+        ],
         "display_limits_by_detector_mjy_sr": {
             str(k): list(v) for k, v in display_limits.items()
         },

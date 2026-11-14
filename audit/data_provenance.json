@@ -1,0 +1,3218 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at_utc": "2026-11-14T10:21:00.622404+00:00",
+  "project": "ASTRAEA \u2014 COSMIC PULSE (Team 02 Backend & Astronomy Audit)",
+  "repository": "https://github.com/nngnamm/ASTRAEA",
+  "taxonomy_definitions": {
+    "verified_real_data": "Traced to an identifiable authoritative upstream astronomical archive or catalog with cryptographic or header verification.",
+    "derived_real_data": "Calculated deterministically from verified observations using documented astronomical processing.",
+    "heuristic_estimate": "Generated using an engineering approximation, composite formula, or empirical rule of thumb.",
+    "synthetic_data": "Artificially generated arrays or FITS structures for deterministic unit testing.",
+    "mock_or_placeholder_data": "Intentionally used in place of live data for offline fallback or UI wiring.",
+    "hardcoded_configuration": "Manually supplied astronomical or system parameter whose literature/catalog source is documented.",
+    "unverified_data": "Origin or live availability cannot be established offline without live archive access.",
+    "unsupported_or_fabricated_claim": "Presented as factual observation counts, uniform detector distributions, or confirmed discoveries without evidence."
+  },
+  "summary_counts": {
+    "verified_cached_fits_files": 30,
+    "verified_collections": {
+      "spherex_dr1": 19,
+      "spherex_qr3": 11
+    },
+    "verified_detectors_in_cache": {
+      "5": 16,
+      "6": 14
+    },
+    "benchmark_targets_total": 5,
+    "benchmark_targets_with_local_fits": 1,
+    "benchmark_targets_unverified_offline": 4,
+    "detected_and_remediated_fabrications": 5
+  },
+  "detected_fabrications_and_remediations": [
+    {
+      "id": "FAB-01",
+      "severity": "P0",
+      "location": "backend/config.py (lines 34-139 prior to audit) & backend/API_CONTRACT_AND_SCIENTIFIC_VALIDATION.md",
+      "provenance_category": "unsupported_or_fabricated_claim",
+      "description": "Hardcoded irsa_audit blocks and data_status='verified_available' across all 5 benchmark targets (barnard: 386, eps_ind_b: 486, wise0855: 263, rw_aur: 342, r_dra: 578) introduced between backup snapshots config.py.bak_be15 and config.py.",
+      "forensic_evidence": [
+        "rw_aur reported by_detector={1: 57, 2: 57, 3: 57, 4: 57, 5: 57, 6: 57} (6*57=342) and visit_groups_30d={D1: 3..D6: 3}, an artificial uniform distribution.",
+        "eps_ind_b, rw_aur, and r_dra have zero cached FITS cutouts or SIA JSON files in backend/cache/ and were never queried in notebooks/NASA_backend_exploration.ipynb.",
+        "API_CONTRACT_AND_SCIENTIFIC_VALIDATION.md claimed these counts came from spherex_dr1 + spherex_qr2, whereas spherex_qr2 returns 0 rows on IRSA (replaced by spherex_dr1 + spherex_qr3).",
+        "wise0855 total_observations=263 and baseline_days=373.6 were copied from a single-collection (spherex_dr1) notebook cell, while per-detector counts {1:37, 2:48, 3:46, 4:38, 5:49, 6:45} were guessed so D5+D6=94."
+      ],
+      "remediation": "Removed fabricated static irsa_audit blocks and replaced data_status='verified_available' with 'verified_local_cache_subset' for barnard (backed by 30 SHA-256 verified FITS files) and 'unverified_offline' for eps_ind_b, wise0855, rw_aur, and r_dra, plus reproducible audit_all_benchmark_targets()."
+    },
+    {
+      "id": "FAB-02",
+      "severity": "P0",
+      "location": "backend/analytics.py (_classify_candidate) & backend/sample_barnard_response.json",
+      "provenance_category": "unsupported_or_fabricated_claim",
+      "description": "Difference-image dipole/peak detections within 12 arcsec of a benchmark coordinate were labeled 'Confirmed Benchmark Object (Barnard's Star)' without independent astrometric/photometric confirmation.",
+      "remediation": "Relabeled to 'Benchmark Coordinate Match \u2014 Unconfirmed (<name>)' with association_type='benchmark_coordinate_match_unconfirmed', independent_confirmation=False, human_reviewed=False, and is_calibrated_probability=False."
+    },
+    {
+      "id": "FAB-03",
+      "severity": "P1",
+      "location": "backend/sample_barnard_response.json (prior to audit)",
+      "provenance_category": "mock_or_placeholder_data",
+      "description": "All 30 real Barnard's Star frames in sample_barnard_response.json were labeled with synthetic collection='spherex_qr2' because the offline generator script hardcoded 'spherex_qr2'.",
+      "remediation": "Cryptographically verified all 30 MD5 cache filenames against their exact IRSA IBE access_urls (19 spherex_dr1, 11 spherex_qr3) and regenerated sample_barnard_response.json with true collections."
+    },
+    {
+      "id": "FAB-04",
+      "severity": "P1",
+      "location": "backend/spherex_core.py (propagate_coords) & backend/main.py (/api/targets)",
+      "provenance_category": "unsupported_or_fabricated_claim",
+      "description": "Propagated coordinates were computed at default to_mjd=61000.0 (2025-11-21, J2025.8877) while API fields were labeled ra_2026 and dec_2026 without epoch metadata.",
+      "remediation": "Set DEFAULT_REFERENCE_MJD = 61041.0 (exact J2026.0 = 2026-01-01T00:00:00 UTC) for ra_2026/dec_2026 and added explicit propagated_to_mjd, propagated_epoch_jyear, catalog_epoch_jyear, and pm_convention metadata."
+    },
+    {
+      "id": "FAB-05",
+      "severity": "P0",
+      "location": "backend/spherex_core.py (find_images & build_cube)",
+      "provenance_category": "unsupported_or_fabricated_claim",
+      "description": "Upstream IRSA SIA exceptions were caught with print() and converted into empty lists, causing build_cube to report error_code='no_observations_found' when IRSA was unreachable, and caching partial multi-collection failures as complete results.",
+      "remediation": "Added per-collection status tracking (complete_with_observations, complete_empty, partial_failure, upstream_failure), restricted SIA caching strictly to complete=True queries, and returned HTTP 503 upstream_service_unavailable when upstream archive queries fail."
+    }
+  ],
+  "benchmark_targets": {
+    "barnard": {
+      "name": "Barnard's Star",
+      "coordinates_provenance_category": "hardcoded_configuration",
+      "coordinate_source": "SIMBAD / Hipparcos / Gaia DR3 ICRS propagated to J2000.0 (GJ 699 / HIP 87937)",
+      "proper_motion_source": "Gaia DR3 (pmra=-801.551 mas/yr, pmdec=+10362.394 mas/yr)",
+      "catalog_ra_deg": 269.452077,
+      "catalog_dec_deg": 4.693365,
+      "catalog_epoch_jyear": 2000.0,
+      "pm_ra_cosdec_arcsec_yr": -0.8015,
+      "pm_dec_arcsec_yr": 10.3624,
+      "j2026_ra_deg": 269.446204,
+      "j2026_dec_deg": 4.768205,
+      "mjd_61000_cutout_center_ra_deg": 269.446294,
+      "mjd_61000_cutout_center_dec_deg": 4.767881,
+      "local_data_provenance_category": "verified_real_data",
+      "verification_status": "verified_local_cache_subset",
+      "cached_fits_count": 30,
+      "collections_in_cache": {
+        "spherex_dr1": 19,
+        "spherex_qr3": 11
+      },
+      "detectors_in_cache": {
+        "5": 16,
+        "6": 14
+      },
+      "mjd_range_in_cache": [
+        60902.865380738,
+        61305.628658077
+      ],
+      "baseline_days_in_cache": 402.76,
+      "comparison_eligible_detectors": [
+        5,
+        6
+      ]
+    },
+    "eps_ind_b": {
+      "name": "Epsilon Indi B",
+      "coordinates_provenance_category": "hardcoded_configuration",
+      "coordinate_source": "SIMBAD / Scholz et al. (2003, A&A, 398, L29) ICRS J2000.0 (HD 209100 B)",
+      "catalog_ra_deg": 331.044147,
+      "catalog_dec_deg": -56.782844,
+      "catalog_epoch_jyear": 2000.0,
+      "pm_ra_cosdec_arcsec_yr": 3.9614,
+      "pm_dec_arcsec_yr": -2.5383,
+      "local_data_provenance_category": "unverified_data",
+      "verification_status": "unverified_offline",
+      "cached_fits_count": 0,
+      "comparison_eligible_detectors": []
+    },
+    "wise0855": {
+      "name": "WISE 0855-0714",
+      "coordinates_provenance_category": "hardcoded_configuration",
+      "coordinate_source": "Luhman (2014, ApJ, 786, L18) WISE discovery epoch J2010.5 (08h55m10.831s -07d14m42.53s)",
+      "proper_motion_source": "Luhman & Esplin (2016, AJ, 152, 78)",
+      "catalog_ra_deg": 133.795129,
+      "catalog_dec_deg": -7.245147,
+      "catalog_epoch_jyear": 2010.5,
+      "pm_ra_cosdec_arcsec_yr": -8.118,
+      "pm_dec_arcsec_yr": 0.68,
+      "local_data_provenance_category": "unverified_data",
+      "verification_status": "unverified_offline",
+      "cached_fits_count": 0,
+      "historical_notebook_evidence": {
+        "notebook": "notebooks/NASA_backend_exploration.ipynb",
+        "cells": [
+          8,
+          31,
+          36
+        ],
+        "collection": "spherex_dr1",
+        "sia_rows_recorded": 263,
+        "d5_d6_frames_recorded": 94,
+        "baseline_days_recorded": 373.6,
+        "local_fits_retained": false
+      },
+      "comparison_eligible_detectors": []
+    },
+    "rw_aur": {
+      "name": "RW Aurigae",
+      "coordinates_provenance_category": "hardcoded_configuration",
+      "coordinate_source": "SIMBAD / Gaia DR3 ICRS J2000.0 (HD 240764)",
+      "catalog_ra_deg": 76.956526,
+      "catalog_dec_deg": 30.401438,
+      "catalog_epoch_jyear": 2000.0,
+      "pm_ra_cosdec_arcsec_yr": 0.003,
+      "pm_dec_arcsec_yr": -0.024,
+      "local_data_provenance_category": "unverified_data",
+      "verification_status": "unverified_offline",
+      "cached_fits_count": 0,
+      "comparison_eligible_detectors": []
+    },
+    "r_dra": {
+      "name": "R Draconis",
+      "coordinates_provenance_category": "hardcoded_configuration",
+      "coordinate_source": "SIMBAD / Gaia DR3 ICRS J2000.0 (HD 150072)",
+      "catalog_ra_deg": 248.167611,
+      "catalog_dec_deg": 66.754979,
+      "catalog_epoch_jyear": 2000.0,
+      "pm_ra_cosdec_arcsec_yr": -0.006,
+      "pm_dec_arcsec_yr": -0.033,
+      "local_data_provenance_category": "unverified_data",
+      "verification_status": "unverified_offline",
+      "cached_fits_count": 0,
+      "comparison_eligible_detectors": []
+    }
+  },
+  "derived_and_heuristic_outputs": [
+    {
+      "name": "Reprojected & Background-Normalized Cutouts",
+      "module": "backend/spherex_core.py (align_frame_to_grid, normalize_frame_background)",
+      "provenance_category": "derived_real_data",
+      "units": "MJy / sr",
+      "description": "ICRS TAN reprojected images with ZODI model and flag-aware 3-sigma-clipped sky pedestal subtracted."
+    },
+    {
+      "name": "Detector-Separated Epoch Coadds & Difference Images",
+      "module": "backend/spherex_core.py (coadd, compute_difference_with_diagnostics)",
+      "provenance_category": "derived_real_data",
+      "units": "MJy / sr",
+      "description": "2.5-sigma-clipped median coadds per 30-day visit group and joint-mask difference images with propagated median variance."
+    },
+    {
+      "name": "Sky Health Index",
+      "module": "backend/analytics.py (compute_sky_health)",
+      "provenance_category": "heuristic_estimate",
+      "formula": "0.50*valid_coverage_pct + 0.30*clean_detector_pct + 0.20*min(100, baseline_days/180*100)",
+      "official_nasa_metric": false
+    },
+    {
+      "name": "Anomaly Candidate SNR Ranking & Confidence Score",
+      "module": "backend/analytics.py (detect_anomalies)",
+      "provenance_category": "heuristic_estimate",
+      "formula": "clip((snr_combined - z_thresh) / 20.0 + 0.50, 0.15, 0.95)",
+      "is_calibrated_probability": false
+    }
+  ],
+  "verified_cached_fits_products": [
+    {
+      "filename": "backend/cache/95b8371b8d74707410276b70fa06c435.fits",
+      "cache_key_md5": "95b8371b8d74707410276b70fa06c435",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W34_1B/l2b-v27-2026-228/5/level2_2025W34_1B_0557_2D5_spx_l2b-v27-2026-228.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "ea2e7a1a0db3c231b2da24442fb3d577cc54c17132058eb5861299c561914634",
+      "size_bytes": 3962880,
+      "observation_id": "2025W34_1B_0557_2",
+      "exposure_id": 202534102055725,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-228",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60907.961475093,
+        "mjd_beg": 60907.961475093,
+        "mjd_avg": 60907.962141282,
+        "mjd_end": 60907.962807471,
+        "date_beg_utc": "2025-08-20T23:04:31.448",
+        "date_avg_utc": "2025-08-20T23:05:29.007",
+        "date_end_utc": "2025-08-20T23:06:26.566",
+        "product_creation_date_utc": "2026-08-17T04:49:03.549"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          267.641868378,
+          3.58787939551
+        ],
+        "shape_yx": [
+          59,
+          19
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            19
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            19
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            19
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            19
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/0140ea2816e7d2d22dbbca47d8ed45e0.fits",
+      "cache_key_md5": "0140ea2816e7d2d22dbbca47d8ed45e0",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W34_2B/l2b-v27-2026-229/5/level2_2025W34_2B_0557_1D5_spx_l2b-v27-2026-229.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "8403ffbd35c978d66defe3f00ea0968418f61b1e7aaeef5e9b18f3ac620363f1",
+      "size_bytes": 3997440,
+      "observation_id": "2025W34_2B_0557_1",
+      "exposure_id": 202534202055715,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-229",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60911.490604352,
+        "mjd_beg": 60911.490604352,
+        "mjd_avg": 60911.491270541,
+        "mjd_end": 60911.49193673,
+        "date_beg_utc": "2025-08-24T11:46:28.216",
+        "date_avg_utc": "2025-08-24T11:47:25.775",
+        "date_end_utc": "2025-08-24T11:48:23.334",
+        "product_creation_date_utc": "2026-08-17T22:11:36.839"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.235579663,
+          6.18755758582
+        ],
+        "shape_yx": [
+          58,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/5be173f068aef88913ae954374edda98.fits",
+      "cache_key_md5": "5be173f068aef88913ae954374edda98",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W35_1A/l2b-v27-2026-230/5/level2_2025W35_1A_0146_2D5_spx_l2b-v27-2026-230.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "abf47697701e533c6cd9d0d9bbc89cd726707202c9a1df4fec6d4e9256f17bfe",
+      "size_bytes": 3997440,
+      "observation_id": "2025W35_1A_0146_2",
+      "exposure_id": 202535101014625,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-230",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60912.715638866,
+        "mjd_beg": 60912.715638866,
+        "mjd_avg": 60912.716305055,
+        "mjd_end": 60912.716971244,
+        "date_beg_utc": "2025-08-25T17:10:31.198",
+        "date_avg_utc": "2025-08-25T17:11:28.757",
+        "date_end_utc": "2025-08-25T17:12:26.315",
+        "product_creation_date_utc": "2026-08-18T14:23:40.660"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.823662335,
+          3.56880505139
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/bbcb28c5e4300752b75e2f97e9c6df24.fits",
+      "cache_key_md5": "bbcb28c5e4300752b75e2f97e9c6df24",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W35_1A/l2b-v27-2026-230/5/level2_2025W35_1A_0444_3D5_spx_l2b-v27-2026-230.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "4bb4589301d1c5ca5fb8646e296086f52bde28e4991d6561c9d60883a4361883",
+      "size_bytes": 3997440,
+      "observation_id": "2025W35_1A_0444_3",
+      "exposure_id": 202535101044435,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-230",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60914.279255382,
+        "mjd_beg": 60914.279255382,
+        "mjd_avg": 60914.279921571,
+        "mjd_end": 60914.28058776,
+        "date_beg_utc": "2025-08-27T06:42:07.665",
+        "date_avg_utc": "2025-08-27T06:43:05.224",
+        "date_end_utc": "2025-08-27T06:44:02.783",
+        "product_creation_date_utc": "2026-08-18T13:32:32.855"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.224734158,
+          5.00678729168
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/4322681cb4f8653db9a29466f2ede97d.fits",
+      "cache_key_md5": "4322681cb4f8653db9a29466f2ede97d",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W35_1A/l2b-v27-2026-230/5/level2_2025W35_1A_0511_1D5_spx_l2b-v27-2026-230.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "d3a91fc103ccf9af3622ca6cac9ea71f9d5359710d50ed901921d61a09deb2df",
+      "size_bytes": 3951360,
+      "observation_id": "2025W35_1A_0511_1",
+      "exposure_id": 202535101051115,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-230",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60914.616398356,
+        "mjd_beg": 60914.616398356,
+        "mjd_avg": 60914.617064546,
+        "mjd_end": 60914.617730735,
+        "date_beg_utc": "2025-08-27T14:47:36.818",
+        "date_avg_utc": "2025-08-27T14:48:34.377",
+        "date_end_utc": "2025-08-27T14:49:31.936",
+        "product_creation_date_utc": "2026-08-18T16:11:30.818"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.830069048,
+          2.9783665158
+        ],
+        "shape_yx": [
+          7,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            7,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            7,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            7,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            7,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/370d9894e8a5513d595417a44a3e08f0.fits",
+      "cache_key_md5": "370d9894e8a5513d595417a44a3e08f0",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W35_2A/l2b-v27-2026-231/5/level2_2025W35_2A_0418_1D5_spx_l2b-v27-2026-231.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "5c34910b191607cc307a5b07185a62005712bc5b9908c7c39830c10754f3b443",
+      "size_bytes": 3997440,
+      "observation_id": "2025W35_2A_0418_1",
+      "exposure_id": 202535201041815,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-231",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60917.673939537,
+        "mjd_beg": 60917.673939537,
+        "mjd_avg": 60917.674605726,
+        "mjd_end": 60917.675271916,
+        "date_beg_utc": "2025-08-30T16:10:28.376",
+        "date_avg_utc": "2025-08-30T16:11:25.935",
+        "date_end_utc": "2025-08-30T16:12:23.494",
+        "product_creation_date_utc": "2026-08-20T01:32:34.988"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.221801646,
+          3.82785655476
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/84d6482ff47b3660b9cc6e748843aa4d.fits",
+      "cache_key_md5": "84d6482ff47b3660b9cc6e748843aa4d",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W11_2A/l2b-v27-2026-234/5/level2_2026W11_2A_0501_4D5_spx_l2b-v27-2026-234.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "08e36385ae2be03d6ace34c2a72ceb2ccdb2ea39023e2378e7fd2af3ea373d7e",
+      "size_bytes": 3997440,
+      "observation_id": "2026W11_2A_0501_4",
+      "exposure_id": 202611201050145,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-234",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61114.036480208,
+        "mjd_beg": 61114.036480208,
+        "mjd_avg": 61114.037146398,
+        "mjd_end": 61114.037812587,
+        "date_beg_utc": "2026-03-15T00:52:31.890",
+        "date_avg_utc": "2026-03-15T00:53:29.449",
+        "date_end_utc": "2026-03-15T00:54:27.007",
+        "product_creation_date_utc": "2026-08-22T17:49:41.834"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.169736572,
+          6.02642783197
+        ],
+        "shape_yx": [
+          58,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/6e7567d875e6c55ae4ddd93d94b03b4f.fits",
+      "cache_key_md5": "6e7567d875e6c55ae4ddd93d94b03b4f",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W11_2A/l2b-v27-2026-234/5/level2_2026W11_2A_0513_4D5_spx_l2b-v27-2026-234.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "22e3506d4fafe5a4631e5385060b3c89e7a56639488e5697b79e914ba65f8815",
+      "size_bytes": 3997440,
+      "observation_id": "2026W11_2A_0513_4",
+      "exposure_id": 202611201051345,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-234",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61114.104040278,
+        "mjd_beg": 61114.104040278,
+        "mjd_avg": 61114.104706467,
+        "mjd_end": 61114.105372656,
+        "date_beg_utc": "2026-03-15T02:29:49.080",
+        "date_avg_utc": "2026-03-15T02:30:46.639",
+        "date_end_utc": "2026-03-15T02:31:44.198",
+        "product_creation_date_utc": "2026-08-22T19:25:48.531"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.159409486,
+          4.45334903475
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/ba89f804b7948f98d9e55ec98e969e64.fits",
+      "cache_key_md5": "ba89f804b7948f98d9e55ec98e969e64",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_1A/l2b-v27-2026-235/5/level2_2026W12_1A_0311_3D5_spx_l2b-v27-2026-235.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "b822e1aeb83b011a58b0537c86ba7b366152ad22c7e6e105f8ee4a43e6469be1",
+      "size_bytes": 3997440,
+      "observation_id": "2026W12_1A_0311_3",
+      "exposure_id": 202612101031135,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-235",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61116.683135729,
+        "mjd_beg": 61116.683135729,
+        "mjd_avg": 61116.683801918,
+        "mjd_end": 61116.684468108,
+        "date_beg_utc": "2026-03-17T16:23:42.927",
+        "date_avg_utc": "2026-03-17T16:24:40.486",
+        "date_end_utc": "2026-03-17T16:25:38.045",
+        "product_creation_date_utc": "2026-08-23T11:37:09.894"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.160309401,
+          5.045839837
+        ],
+        "shape_yx": [
+          58,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/e394055ec44abbe35608738c87340c13.fits",
+      "cache_key_md5": "e394055ec44abbe35608738c87340c13",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_2A/l2b-v27-2026-235/5/level2_2026W12_2A_0371_2D5_spx_l2b-v27-2026-235.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "2a62cad23b317e1d744725f1ef6a09fc5982253946a063fd0b27e8cdffde1ac9",
+      "size_bytes": 3997440,
+      "observation_id": "2026W12_2A_0371_2",
+      "exposure_id": 202612201037125,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-235",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61120.550579734,
+        "mjd_beg": 61120.550579734,
+        "mjd_avg": 61120.551245923,
+        "mjd_end": 61120.551912112,
+        "date_beg_utc": "2026-03-21T13:12:50.089",
+        "date_avg_utc": "2026-03-21T13:13:47.648",
+        "date_end_utc": "2026-03-21T13:14:45.207",
+        "product_creation_date_utc": "2026-08-24T08:09:33.827"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.761921148,
+          3.20926433231
+        ],
+        "shape_yx": [
+          58,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/b8951e640e7056445ad8656ebc484b4e.fits",
+      "cache_key_md5": "b8951e640e7056445ad8656ebc484b4e",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_1A/l2b-v27-2026-243/5/level2_2026W34_1A_0456_2D5_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "b50e7b30577c79e71b1e75cde4dfc3ff42aab5751c7fd747586516954e75ac7b",
+      "size_bytes": 3974400,
+      "observation_id": "2026W34_1A_0456_2",
+      "exposure_id": 202634101045625,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61271.343553403,
+        "mjd_beg": 61271.343553403,
+        "mjd_avg": 61271.344219592,
+        "mjd_end": 61271.344885781,
+        "date_beg_utc": "2026-08-19T08:14:43.014",
+        "date_avg_utc": "2026-08-19T08:15:40.573",
+        "date_end_utc": "2026-08-19T08:16:38.131",
+        "product_creation_date_utc": "2026-09-03T02:28:22.605"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          267.828610491,
+          3.09198797692
+        ],
+        "shape_yx": [
+          28,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            28,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            28,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            28,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            28,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/46046aeb3c058ecb486ee1fa9fbe2e7c.fits",
+      "cache_key_md5": "46046aeb3c058ecb486ee1fa9fbe2e7c",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_2A/l2b-v27-2026-243/5/level2_2026W34_2A_0206_1D5_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "9a88f39d959d7ae341514747bfd8f65bafcf62f34b85fd273c3ad58b0e150b12",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_2A_0206_1",
+      "exposure_id": 202634201020615,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61273.513363032,
+        "mjd_beg": 61273.513363032,
+        "mjd_avg": 61273.514029222,
+        "mjd_end": 61273.514695411,
+        "date_beg_utc": "2026-08-21T12:19:14.566",
+        "date_avg_utc": "2026-08-21T12:20:12.125",
+        "date_end_utc": "2026-08-21T12:21:09.684",
+        "product_creation_date_utc": "2026-08-31T17:47:06.322"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.429171625,
+          5.89167153445
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/3cec8479d10e8b116c737521e5309b06.fits",
+      "cache_key_md5": "3cec8479d10e8b116c737521e5309b06",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_2A/l2b-v27-2026-243/5/level2_2026W34_2A_0233_1D5_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "5c5adeb698ab3a4d864ef53ed43c2fcce2d65fac166b501dc6264f331b259a9b",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_2A_0233_1",
+      "exposure_id": 202634201023315,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61273.649318102,
+        "mjd_beg": 61273.649318102,
+        "mjd_avg": 61273.649984291,
+        "mjd_end": 61273.65065048,
+        "date_beg_utc": "2026-08-21T15:35:01.084",
+        "date_avg_utc": "2026-08-21T15:35:58.643",
+        "date_end_utc": "2026-08-21T15:36:56.202",
+        "product_creation_date_utc": "2026-08-31T14:20:36.728"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.424618786,
+          5.10455616007
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/2cf2d3ce43550860e4343e2f935b41bb.fits",
+      "cache_key_md5": "2cf2d3ce43550860e4343e2f935b41bb",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_2A/l2b-v27-2026-243/5/level2_2026W34_2A_0249_2D5_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "194bf47c6dcc31f105e064dbdb2e69f3464b2b645d9845271e52bae462da7de2",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_2A_0249_2",
+      "exposure_id": 202634201024925,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61273.721177269,
+        "mjd_beg": 61273.721177269,
+        "mjd_avg": 61273.721843458,
+        "mjd_end": 61273.722509647,
+        "date_beg_utc": "2026-08-21T17:18:29.716",
+        "date_avg_utc": "2026-08-21T17:19:27.275",
+        "date_end_utc": "2026-08-21T17:20:24.834",
+        "product_creation_date_utc": "2026-08-31T11:04:49.122"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.419551903,
+          4.12199185442
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/426bb54bae875f163c9b637e479b378d.fits",
+      "cache_key_md5": "426bb54bae875f163c9b637e479b378d",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W35_1A/l2b-v27-2026-243/5/level2_2026W35_1A_0038_1D5_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "1a10363d111c15519d40a20bb6502c691b18ba5a915b60c6be5d8aeeb3450430",
+      "size_bytes": 3997440,
+      "observation_id": "2026W35_1A_0038_1",
+      "exposure_id": 202635101003815,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61276.16628985,
+        "mjd_beg": 61276.16628985,
+        "mjd_avg": 61276.166956039,
+        "mjd_end": 61276.167622228,
+        "date_beg_utc": "2026-08-24T03:59:27.443",
+        "date_avg_utc": "2026-08-24T04:00:25.002",
+        "date_end_utc": "2026-08-24T04:01:22.561",
+        "product_creation_date_utc": "2026-09-01T15:09:13.137"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          271.019256073,
+          3.47179233276
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/be12b58d91e7db2abb2e27b014b9df70.fits",
+      "cache_key_md5": "be12b58d91e7db2abb2e27b014b9df70",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W39_1A/l2b-v27-2026-268/5/level2_2026W39_1A_0371_1D5_spx_l2b-v27-2026-268.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "79ad86cc4ce8952e7bff3adf935ba5ca48f6999dfb7a6384108df8bb40373b41",
+      "size_bytes": 3997440,
+      "observation_id": "2026W39_1A_0371_1",
+      "exposure_id": 202639101037115,
+      "detector": 5,
+      "pipeline_release_tag": "l2b-v27-2026-268",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61305.628020625,
+        "mjd_beg": 61305.628020625,
+        "mjd_avg": 61305.628686814,
+        "mjd_end": 61305.629353003,
+        "date_beg_utc": "2026-09-22T15:04:20.982",
+        "date_avg_utc": "2026-09-22T15:05:18.541",
+        "date_end_utc": "2026-09-22T15:06:16.100",
+        "product_creation_date_utc": "2026-09-26T13:14:18.023"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          267.8478176,
+          3.87791060007
+        ],
+        "shape_yx": [
+          59,
+          59
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            59
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (11,)), ('Y', '>i4', (11,)), ('VALUES', '>f4', (11, 11, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/ebec6e19177daf652cc1bc959547e8c8.fits",
+      "cache_key_md5": "ebec6e19177daf652cc1bc959547e8c8",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W33_2C/l2b-v27-2026-228/6/level2_2025W33_2C_0321_1D6_spx_l2b-v27-2026-228.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "281bbce911cbf939ace1fad2fe43fefaa50fdd675faceb3b864e390ffa086116",
+      "size_bytes": 3997440,
+      "observation_id": "2025W33_2C_0321_1",
+      "exposure_id": 202533203032116,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-228",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60902.864714549,
+        "mjd_beg": 60902.864714549,
+        "mjd_avg": 60902.865380738,
+        "mjd_end": 60902.866046927,
+        "date_beg_utc": "2025-08-15T20:45:11.337",
+        "date_avg_utc": "2025-08-15T20:46:08.896",
+        "date_end_utc": "2025-08-15T20:47:06.455",
+        "product_creation_date_utc": "2026-08-16T13:49:47.923"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.339750167,
+          3.58428436358
+        ],
+        "shape_yx": [
+          59,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/ffe72d5befb7f1da0f159dafa42cb49e.fits",
+      "cache_key_md5": "ffe72d5befb7f1da0f159dafa42cb49e",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W33_2C/l2b-v27-2026-228/6/level2_2025W33_2C_0386_4D6_spx_l2b-v27-2026-228.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "c7b16d182a4413851d45e6bb6319ed12316236f9aa98e290aa2f687d10c00fbe",
+      "size_bytes": 3997440,
+      "observation_id": "2025W33_2C_0386_4",
+      "exposure_id": 202533203038646,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-228",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60903.139857894,
+        "mjd_beg": 60903.139857894,
+        "mjd_avg": 60903.140524083,
+        "mjd_end": 60903.141190272,
+        "date_beg_utc": "2025-08-16T03:21:23.722",
+        "date_avg_utc": "2025-08-16T03:22:21.281",
+        "date_end_utc": "2025-08-16T03:23:18.840",
+        "product_creation_date_utc": "2026-08-16T13:53:22.754"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.943897755,
+          6.1844076396
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/49e43b144df52f4649a7d8d4c66a9d31.fits",
+      "cache_key_md5": "49e43b144df52f4649a7d8d4c66a9d31",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W34_2B/l2b-v27-2026-229/6/level2_2025W34_2B_0030_3D6_spx_l2b-v27-2026-229.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "0154c420b505156a070402f4c37967edda59c06785ee04697fca6f09445222fd",
+      "size_bytes": 3997440,
+      "observation_id": "2025W34_2B_0030_3",
+      "exposure_id": 202534202003036,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-229",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60908.642174167,
+        "mjd_beg": 60908.642174167,
+        "mjd_avg": 60908.642840356,
+        "mjd_end": 60908.643506545,
+        "date_beg_utc": "2025-08-21T15:24:43.848",
+        "date_avg_utc": "2025-08-21T15:25:41.407",
+        "date_end_utc": "2025-08-21T15:26:38.966",
+        "product_creation_date_utc": "2026-08-17T19:10:45.677"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.899893395,
+          5.00742603112
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/71aee69864d5981d539a05bf61a5470a.fits",
+      "cache_key_md5": "71aee69864d5981d539a05bf61a5470a",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2025W35_1A/l2b-v27-2026-230/6/level2_2025W35_1A_0008_2D6_spx_l2b-v27-2026-230.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "29c69bcea0d1d7fe8f2d6d7eed55e0903341564987b98819f735da5e2af491ae",
+      "size_bytes": 3997440,
+      "observation_id": "2025W35_1A_0008_2",
+      "exposure_id": 202535101000826,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-230",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 60912.035916863,
+        "mjd_beg": 60912.035916863,
+        "mjd_avg": 60912.036583053,
+        "mjd_end": 60912.037249242,
+        "date_beg_utc": "2025-08-25T00:51:43.217",
+        "date_avg_utc": "2025-08-25T00:52:40.776",
+        "date_end_utc": "2025-08-25T00:53:38.335",
+        "product_creation_date_utc": "2026-08-18T14:02:43.301"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          269.880155837,
+          4.41933895304
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/0e7458b5b765209bc3dbadbc10517f8c.fits",
+      "cache_key_md5": "0e7458b5b765209bc3dbadbc10517f8c",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_1A/l2b-v27-2026-235/6/level2_2026W12_1A_0598_3D6_spx_l2b-v27-2026-235.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "19cc6deb00b899c8c3a7cb98caf2cc2204b3e0c25b2a3bdfd1be4e64837a31cc",
+      "size_bytes": 3997440,
+      "observation_id": "2026W12_1A_0598_3",
+      "exposure_id": 202612101059836,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-235",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61118.312215787,
+        "mjd_beg": 61118.312215787,
+        "mjd_avg": 61118.312881976,
+        "mjd_end": 61118.313548166,
+        "date_beg_utc": "2026-03-19T07:29:35.444",
+        "date_avg_utc": "2026-03-19T07:30:33.003",
+        "date_end_utc": "2026-03-19T07:31:30.561",
+        "product_creation_date_utc": "2026-08-23T14:14:04.624"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.504206802,
+          4.31424248494
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/78e0dd2be6e5bf934e73f926856c5d5b.fits",
+      "cache_key_md5": "78e0dd2be6e5bf934e73f926856c5d5b",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_1A/l2b-v27-2026-235/6/level2_2026W12_1A_0610_4D6_spx_l2b-v27-2026-235.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "159c173617c846413a1c0612888555760aaddbb2d84790b6d2e6db89d930eb4e",
+      "size_bytes": 3997440,
+      "observation_id": "2026W12_1A_0610_4",
+      "exposure_id": 202612101061046,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-235",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61118.381516794,
+        "mjd_beg": 61118.381516794,
+        "mjd_avg": 61118.382182983,
+        "mjd_end": 61118.382849172,
+        "date_beg_utc": "2026-03-19T09:09:23.051",
+        "date_avg_utc": "2026-03-19T09:10:20.610",
+        "date_end_utc": "2026-03-19T09:11:18.169",
+        "product_creation_date_utc": "2026-08-23T14:33:45.330"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.479622379,
+          5.29478458758
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/6ed482a6acdc2bf5d92d6dbabd51653d.fits",
+      "cache_key_md5": "6ed482a6acdc2bf5d92d6dbabd51653d",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W12_2A/l2b-v27-2026-235/6/level2_2026W12_2A_0520_2D6_spx_l2b-v27-2026-235.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "9f88587f36fccd8ad0a0e5e0ad6a5b72c06b89fc99736d921e21db8535d6a1d4",
+      "size_bytes": 3997440,
+      "observation_id": "2026W12_2A_0520_2",
+      "exposure_id": 202612201052026,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-235",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61121.365617141,
+        "mjd_beg": 61121.365617141,
+        "mjd_avg": 61121.36628333,
+        "mjd_end": 61121.36694952,
+        "date_beg_utc": "2026-03-22T08:46:29.321",
+        "date_avg_utc": "2026-03-22T08:47:26.880",
+        "date_end_utc": "2026-03-22T08:48:24.439",
+        "product_creation_date_utc": "2026-08-24T05:14:13.883"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.469484725,
+          5.68725019323
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/94d62774fd06a9cb0c527bf1a8e89376.fits",
+      "cache_key_md5": "94d62774fd06a9cb0c527bf1a8e89376",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W13_1A/l2b-v27-2026-236/6/level2_2026W13_1A_0129_2D6_spx_l2b-v27-2026-236.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "ff4a9901be26274a756a648652334f894c9a4efb514982e88f1e67e4a08d659e",
+      "size_bytes": 3997440,
+      "observation_id": "2026W13_1A_0129_2",
+      "exposure_id": 202613101012926,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-236",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61122.655617789,
+        "mjd_beg": 61122.655617789,
+        "mjd_avg": 61122.656283979,
+        "mjd_end": 61122.656950168,
+        "date_beg_utc": "2026-03-23T15:44:05.377",
+        "date_avg_utc": "2026-03-23T15:45:02.936",
+        "date_end_utc": "2026-03-23T15:46:00.495",
+        "product_creation_date_utc": "2026-08-25T02:00:49.198"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.074785659,
+          3.26133382988
+        ],
+        "shape_yx": [
+          59,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            59,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/7c3ffc77f3cfaad1f0a364ca0870048a.fits",
+      "cache_key_md5": "7c3ffc77f3cfaad1f0a364ca0870048a",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_dr1",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/dr1/level2/2026W19_1A/l2b-v27-2026-245/6/level2_2026W19_1A_0046_1D6_spx_l2b-v27-2026-245.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "e58b596df3535eedd3a8bc1553191a33bf3cab36bdd8f7fd5ac370f5cbae68d0",
+      "size_bytes": 3997440,
+      "observation_id": "2026W19_1A_0046_1",
+      "exposure_id": 202619101004616,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-245",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61164.133133576,
+        "mjd_beg": 61164.133133576,
+        "mjd_avg": 61164.133799766,
+        "mjd_end": 61164.134465955,
+        "date_beg_utc": "2026-05-04T03:11:42.741",
+        "date_avg_utc": "2026-05-04T03:12:40.300",
+        "date_end_utc": "2026-05-04T03:13:37.859",
+        "product_creation_date_utc": "2026-09-02T15:15:49.919"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.473131496,
+          5.29307287202
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/c22793f0b31233b7ad9b86094d1545f2.fits",
+      "cache_key_md5": "c22793f0b31233b7ad9b86094d1545f2",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W33_2A/l2b-v27-2026-241/6/level2_2026W33_2A_0594_3D6_spx_l2b-v27-2026-241.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "7a1764b8dffb574b8cea33bf700908ada61b8f57c52dd428ec4aeebd6085cb16",
+      "size_bytes": 3962880,
+      "observation_id": "2026W33_2A_0594_3",
+      "exposure_id": 202633201059436,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-241",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61268.629319352,
+        "mjd_beg": 61268.629319352,
+        "mjd_avg": 61268.629985541,
+        "mjd_end": 61268.63065173,
+        "date_beg_utc": "2026-08-16T15:06:13.192",
+        "date_avg_utc": "2026-08-16T15:07:10.751",
+        "date_end_utc": "2026-08-16T15:08:08.309",
+        "product_creation_date_utc": "2026-08-30T11:05:53.421"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.153407545,
+          6.47764167144
+        ],
+        "shape_yx": [
+          20,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/94373761ba6ee0cc6cc94093b34f3755.fits",
+      "cache_key_md5": "94373761ba6ee0cc6cc94093b34f3755",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_1A/l2b-v27-2026-243/6/level2_2026W34_1A_0007_3D6_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "412a57cfdf03a997e231dd2cd7330e72f571613ccf9ace13e8704fb4a9575d78",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_1A_0007_3",
+      "exposure_id": 202634101000736,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61269.036402963,
+        "mjd_beg": 61269.036402963,
+        "mjd_avg": 61269.037069152,
+        "mjd_end": 61269.037735341,
+        "date_beg_utc": "2026-08-17T00:52:25.216",
+        "date_avg_utc": "2026-08-17T00:53:22.775",
+        "date_end_utc": "2026-08-17T00:54:20.334",
+        "product_creation_date_utc": "2026-09-02T19:10:24.647"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.123942033,
+          5.69504789516
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/bed9acfa8fb34a3a4a8d70559abaeb7b.fits",
+      "cache_key_md5": "bed9acfa8fb34a3a4a8d70559abaeb7b",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_1A/l2b-v27-2026-243/6/level2_2026W34_1A_0238_2D6_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "f2079306e31676db34c0a4d9712bea260a7a2c494785c1cf78b2d711f50f966e",
+      "size_bytes": 3962880,
+      "observation_id": "2026W34_1A_0238_2",
+      "exposure_id": 202634101023826,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61270.190129201,
+        "mjd_beg": 61270.190129201,
+        "mjd_avg": 61270.190795391,
+        "mjd_end": 61270.19146158,
+        "date_beg_utc": "2026-08-18T04:33:47.163",
+        "date_avg_utc": "2026-08-18T04:34:44.722",
+        "date_end_utc": "2026-08-18T04:35:42.281",
+        "product_creation_date_utc": "2026-09-02T18:13:03.845"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          268.511206841,
+          3.0883829908
+        ],
+        "shape_yx": [
+          20,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            20,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/eb3f217b688e66154f4d8679394bde6e.fits",
+      "cache_key_md5": "eb3f217b688e66154f4d8679394bde6e",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_1A/l2b-v27-2026-243/6/level2_2026W34_1A_0308_4D6_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "edee08d598a9d7ea22e51878098eec5b35fba67a4385a420799fd8f60e9dd9db",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_1A_0308_4",
+      "exposure_id": 202634101030846,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61270.599255764,
+        "mjd_beg": 61270.599255764,
+        "mjd_avg": 61270.599921953,
+        "mjd_end": 61270.600588142,
+        "date_beg_utc": "2026-08-18T14:22:55.698",
+        "date_avg_utc": "2026-08-18T14:23:53.257",
+        "date_end_utc": "2026-08-18T14:24:50.815",
+        "product_creation_date_utc": "2026-09-02T22:34:05.352"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.088577127,
+          4.71323922834
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    },
+    {
+      "filename": "backend/cache/636a3c537b5e7887aaf5d862388b8786.fits",
+      "cache_key_md5": "636a3c537b5e7887aaf5d862388b8786",
+      "provenance_category": "verified_real_data",
+      "upstream_archive": "NASA/IPAC Infrared Science Archive (IRSA)",
+      "collection": "spherex_qr3",
+      "access_url": "https://irsa.ipac.caltech.edu/ibe/data/spherex/qr3/level2/2026W34_1A/l2b-v27-2026-243/6/level2_2026W34_1A_0431_2D6_spx_l2b-v27-2026-243.fits",
+      "cutout_query_parameters": {
+        "center_ra_deg": 269.44629,
+        "center_dec_deg": 4.76788,
+        "size_deg": 0.1
+      },
+      "md5_preimage_verified": true,
+      "sha256": "647724abc3663626058fcbba137e9ecb1f7f99f10e8f00de3d5da120de01a3c3",
+      "size_bytes": 3997440,
+      "observation_id": "2026W34_1A_0431_2",
+      "exposure_id": 202634101043126,
+      "detector": 6,
+      "pipeline_release_tag": "l2b-v27-2026-243",
+      "timing": {
+        "time_system": "UTC",
+        "mjd_obs": 61271.207562801,
+        "mjd_beg": 61271.207562801,
+        "mjd_avg": 61271.20822899,
+        "mjd_end": 61271.208895179,
+        "date_beg_utc": "2026-08-19T04:58:53.426",
+        "date_avg_utc": "2026-08-19T04:59:50.985",
+        "date_end_utc": "2026-08-19T05:00:48.544",
+        "product_creation_date_utc": "2026-09-03T07:23:48.223"
+      },
+      "wcs_and_geometry": {
+        "radesys": "ICRS",
+        "ctype": [
+          "RA---TAN-SIP",
+          "DEC--TAN-SIP"
+        ],
+        "crval_deg": [
+          270.061569212,
+          4.33284714812
+        ],
+        "shape_yx": [
+          58,
+          58
+        ],
+        "bunit": "MJy / sr"
+      },
+      "hdu_structure": [
+        {
+          "name": "PRIMARY",
+          "shape": null,
+          "dtype": null
+        },
+        {
+          "name": "IMAGE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "FLAGS",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">i4"
+        },
+        {
+          "name": "VARIANCE",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "ZODI",
+          "shape": [
+            58,
+            58
+          ],
+          "dtype": ">f4"
+        },
+        {
+          "name": "EPSF",
+          "shape": [
+            441
+          ],
+          "dtype": "(numpy.record, [('BINX', '>i4'), ('BINY', '>i4'), ('XCENTER', '>f4'), ('YCENTER', '>f4'), ('XWIDTH', '>f4'), ('YWIDTH', '>f4'), ('NSTAR', '>i4'), ('NEFF_MEAN', '>f4'), ('CWAVE', '>f4'), ('CBAND', '>f4'), ('EPSF', '>f8', (33, 33))])"
+        },
+        {
+          "name": "WCS-WAVE",
+          "shape": [
+            1
+          ],
+          "dtype": "(numpy.record, [('X', '>i4', (9,)), ('Y', '>i4', (9,)), ('VALUES', '>f4', (9, 9, 2))])"
+        }
+      ]
+    }
+  ]
+}

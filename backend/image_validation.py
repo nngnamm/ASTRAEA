@@ -1,10 +1,16 @@
 """Structural and metadata validation for SPHEREx spectral-image FITS products.
 
-The validator distinguishes structural integrity from scientific quality. It
-reads flag definitions from each FITS FLAGS header and reports per-bit counts,
-but deliberately does not apply a universal bad-pixel mask. A masking policy
-must be selected for a specific operation (for example, photometry versus
-visual comparison).
+The validator separates four distinct readiness dimensions:
+1. Structural validity (required HDUs, dimensions, dtypes, header keywords).
+2. Numerical validity (finite pixel fractions, variance positivity, mask consistency).
+3. Alignment validity (celestial WCS invertibility and reprojection readiness).
+4. Scientific-operation suitability (operation-specific readiness for visual display,
+   background estimation, epoch coaddition, difference imaging, and photometry).
+
+It reads flag definitions from each FITS FLAGS header and reports both per-bit counts
+and exact bitwise-union counts (preventing double-counting when a pixel carries
+multiple flags). It also provides operation-specific flag masks on demand without
+applying a destructive universal mask at load time.
 """
 from __future__ import annotations
 
@@ -21,6 +27,41 @@ _REQUIRED_EPSF_COLUMNS = {
 }
 _REQUIRED_WAVE_COLUMNS = {"X", "Y", "VALUES"}
 
+# SPHEREx Level-2 astrophysical / source-related flag names that do not indicate
+# detector hardware defects.
+ASTROPHYSICAL_FLAG_NAMES = {"SOURCE", "TRANSIENT"}
+
+# Severe detector/pipeline defect flag names that should be excluded from sky
+# background estimation and flagged during photometric quality checks.
+SEVERE_DEFECT_FLAG_NAMES = {
+    "OVERFLOW",
+    "NONFUNC",
+    "MISSING_DATA",
+    "HOT",
+    "COLD",
+    "OUTLIER",
+    "PERSIST",
+    "ghost",
+    "GHOST",
+}
+
+# Fallback SPHEREx Level-2 bitmask for severe detector defects when FLAGS header
+# cards (MSKNnnnn) are not supplied:
+# Bit 1 (OVERFLOW), Bit 2 (SNOWBALL), Bit 4 (PERSIST), Bit 6 (NONFUNC),
+# Bit 7 (OUTLIER), Bit 9 (MISSING_DATA), Bit 10 (HOT), Bit 11 (COLD), Bit 19 (PHAN_MISS).
+# Deliberately excludes Bit 0 (TRANSIENT) and Bit 21 (SOURCE).
+DEFAULT_NON_ASTROPHYSICAL_DEFECT_BITMASK = int(
+    (1 << 1)
+    | (1 << 2)
+    | (1 << 4)
+    | (1 << 6)
+    | (1 << 7)
+    | (1 << 9)
+    | (1 << 10)
+    | (1 << 11)
+    | (1 << 19)
+)
+
 
 def _table_column_names(table: Any) -> set[str]:
     """Return binary-table column names for an Astropy FITS_rec/table array."""
@@ -36,11 +77,56 @@ def _table_column_names(table: Any) -> set[str]:
     return set()
 
 
+def build_operation_flag_mask(
+    flags: np.ndarray | None,
+    flag_definitions: list[dict[str, Any]] | None = None,
+    operation: str = "background_estimation",
+) -> np.ndarray | None:
+    """Construct a boolean mask (True = flagged/exclude) for a specific scientific operation.
+
+    Operations:
+    - ``"background_estimation"``: excludes both known astrophysical sources (``SOURCE``,
+      ``TRANSIENT``) and detector/pipeline defect bits so the sky pedestal is estimated
+      from unflagged background pixels where possible.
+    - ``"detector_defects_only"``: excludes only non-astrophysical defect bits (preserving
+      ``SOURCE`` and ``TRANSIENT`` pixels so stars and transients are never masked out).
+    """
+    if flags is None:
+        return None
+    flag_array = np.asarray(flags)
+    if flag_array.ndim != 2 or not np.issubdtype(flag_array.dtype, np.integer):
+        return None
+
+    flags_u32 = flag_array.astype(np.uint32, copy=False)
+    bitmask = np.uint32(0)
+
+    if flag_definitions:
+        for item in flag_definitions:
+            bit = item.get("bit")
+            if bit is None or not (0 <= int(bit) < 32):
+                continue
+            name = str(item.get("name", "")).strip().upper()
+            if operation == "background_estimation":
+                bitmask |= np.uint32(1 << int(bit))
+            elif operation == "detector_defects_only":
+                if name not in ASTROPHYSICAL_FLAG_NAMES:
+                    bitmask |= np.uint32(1 << int(bit))
+    else:
+        if operation == "background_estimation":
+            bitmask = np.uint32(DEFAULT_NON_ASTROPHYSICAL_DEFECT_BITMASK | (1 << 21) | (1 << 0))
+        elif operation == "detector_defects_only":
+            bitmask = np.uint32(DEFAULT_NON_ASTROPHYSICAL_DEFECT_BITMASK)
+
+    return (flags_u32 & bitmask) != 0
+
+
 def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str, Any]:
     """Decode per-bit names/descriptions from MSKNnnnn/MSKDnnnn FITS cards.
 
-    Counts are non-exclusive: a pixel can carry several bits. No bit is
-    interpreted as universally fatal and no pixels are masked here.
+    Per-bit counts are non-exclusive: a pixel can carry several bits. To prevent
+    downstream consumers from summing non-exclusive fractions, this function also
+    computes exact pixelwise bitwise-union counts for all flags and for
+    non-astrophysical defect flags.
     """
     if flags is None or flags_header is None:
         return {
@@ -48,6 +134,11 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
             "definitions": [],
             "active_bits_without_definitions": [],
             "active_bits_outside_32bit_range": [],
+            "any_flagged_pixels": None,
+            "any_flagged_fraction": None,
+            "non_astrophysical_flagged_pixels": None,
+            "non_astrophysical_flagged_fraction": None,
+            "non_astrophysical_bitmask": None,
         }
 
     flag_array = np.asarray(flags)
@@ -57,6 +148,11 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
             "definitions": [],
             "active_bits_without_definitions": [],
             "active_bits_outside_32bit_range": [],
+            "any_flagged_pixels": None,
+            "any_flagged_fraction": None,
+            "non_astrophysical_flagged_pixels": None,
+            "non_astrophysical_flagged_fraction": None,
+            "non_astrophysical_bitmask": None,
         }
 
     # SPHEREx image FLAGS in this dataset are 32-bit integer bitmaps. Casting
@@ -80,6 +176,7 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
             active_bits.append(bit)
 
     details = []
+    non_astro_mask = np.uint32(0)
     for bit, (name, description) in sorted(definitions_by_bit.items()):
         if bit >= 32:
             details.append({
@@ -92,6 +189,8 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
             })
             continue
         mask = np.uint32(1 << bit)
+        if name.upper() not in ASTROPHYSICAL_FLAG_NAMES:
+            non_astro_mask |= mask
         count = int(np.count_nonzero((flags_u32 & mask) != 0))
         details.append({
             "bit": bit,
@@ -102,6 +201,9 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
             "definition_only": count == 0,
         })
 
+    any_flagged_pixels = int(np.count_nonzero(flags_u32 != 0))
+    non_astro_pixels = int(np.count_nonzero((flags_u32 & non_astro_mask) != 0))
+
     return {
         "decoded": bool(definitions_by_bit),
         "definitions": details,
@@ -111,6 +213,11 @@ def _decode_flag_header(flags: np.ndarray | None, flags_header: Any) -> dict[str
         "active_bits_outside_32bit_range": [
             bit for bit in definitions_by_bit if bit >= 32
         ],
+        "any_flagged_pixels": any_flagged_pixels,
+        "any_flagged_fraction": round(any_flagged_pixels / flag_array.size, 8) if flag_array.size else 0.0,
+        "non_astrophysical_flagged_pixels": non_astro_pixels,
+        "non_astrophysical_flagged_fraction": round(non_astro_pixels / flag_array.size, 8) if flag_array.size else 0.0,
+        "non_astrophysical_bitmask": int(non_astro_mask),
     }
 
 
@@ -137,24 +244,36 @@ def validate_image_payload(
     path. This function never applies a quality-flag mask.
     """
     errors: list[str] = []
+    structural_errors: list[str] = []
+    numerical_errors: list[str] = []
     warnings: list[str] = []
     extension_reports: dict[str, Any] = {}
 
     # IMAGE ---------------------------------------------------------------
     image_array = None
     if image is None:
-        errors.append("IMAGE extension has no data.")
+        msg = "IMAGE extension has no data."
+        errors.append(msg)
+        structural_errors.append(msg)
     else:
         try:
             image_array = np.asarray(image)
             if image_array.ndim != 2:
-                errors.append(f"IMAGE data must be 2-D; received {image_array.ndim}-D.")
+                msg = f"IMAGE data must be 2-D; received {image_array.ndim}-D."
+                errors.append(msg)
+                structural_errors.append(msg)
             elif image_array.size == 0 or min(image_array.shape) < 2:
-                errors.append("IMAGE data is empty or too small.")
+                msg = "IMAGE data is empty or too small."
+                errors.append(msg)
+                structural_errors.append(msg)
             elif not np.issubdtype(image_array.dtype, np.number):
-                errors.append("IMAGE data must have a numeric data type.")
+                msg = "IMAGE data must have a numeric data type."
+                errors.append(msg)
+                structural_errors.append(msg)
         except Exception as exc:
-            errors.append(f"IMAGE data could not be interpreted: {type(exc).__name__}: {exc}")
+            msg = f"IMAGE data could not be interpreted: {type(exc).__name__}: {exc}"
+            errors.append(msg)
+            structural_errors.append(msg)
 
     image_valid_shape = (
         image_array is not None and image_array.ndim == 2 and image_array.size > 0
@@ -165,7 +284,9 @@ def validate_image_payload(
         image_finite = np.isfinite(image_array)
         image_finite_fraction = float(image_finite.mean())
         if not image_finite.any():
-            errors.append("IMAGE data contains no finite pixels.")
+            msg = "IMAGE data contains no finite pixels."
+            errors.append(msg)
+            numerical_errors.append(msg)
         elif image_finite_fraction < 1.0:
             warnings.append(
                 "IMAGE contains non-finite pixels; preserve this mask in all downstream processing."
@@ -175,21 +296,29 @@ def validate_image_payload(
     flags_array = None
     flags_shape = None
     if flags is None:
-        errors.append("Required FLAGS extension is missing or has no data.")
+        msg = "Required FLAGS extension is missing or has no data."
+        errors.append(msg)
+        structural_errors.append(msg)
     else:
         try:
             flags_array = np.asarray(flags)
             flags_shape = list(flags_array.shape)
             if flags_array.ndim != 2:
-                errors.append(f"FLAGS data must be 2-D; received {flags_array.ndim}-D.")
+                msg = f"FLAGS data must be 2-D; received {flags_array.ndim}-D."
+                errors.append(msg)
+                structural_errors.append(msg)
             if not np.issubdtype(flags_array.dtype, np.integer):
-                errors.append("FLAGS data must have an integer data type.")
+                msg = "FLAGS data must have an integer data type."
+                errors.append(msg)
+                structural_errors.append(msg)
             if image_valid_shape and flags_array.shape != image_array.shape:
-                errors.append(
-                    f"FLAGS shape {flags_array.shape} does not match IMAGE shape {image_array.shape}."
-                )
+                msg = f"FLAGS shape {flags_array.shape} does not match IMAGE shape {image_array.shape}."
+                errors.append(msg)
+                structural_errors.append(msg)
         except Exception as exc:
-            errors.append(f"FLAGS data could not be interpreted: {type(exc).__name__}: {exc}")
+            msg = f"FLAGS data could not be interpreted: {type(exc).__name__}: {exc}"
+            errors.append(msg)
+            structural_errors.append(msg)
 
     # DETECTOR / TIME ------------------------------------------------------
     detector = None
@@ -197,20 +326,28 @@ def validate_image_payload(
     try:
         detector = int(header["DETECTOR"])
         if detector not in range(1, 7):
-            errors.append(f"DETECTOR must be between 1 and 6; received {detector}.")
+            msg = f"DETECTOR must be between 1 and 6; received {detector}."
+            errors.append(msg)
+            structural_errors.append(msg)
         if expected_detector is not None and detector != int(expected_detector):
-            errors.append(
-                f"FITS DETECTOR={detector} does not match queried detector={expected_detector}."
-            )
+            msg = f"FITS DETECTOR={detector} does not match queried detector={expected_detector}."
+            errors.append(msg)
+            structural_errors.append(msg)
     except Exception:
-        errors.append("IMAGE header is missing a valid DETECTOR value.")
+        msg = "IMAGE header is missing a valid DETECTOR value."
+        errors.append(msg)
+        structural_errors.append(msg)
 
     try:
         mjd_avg = float(header["MJD-AVG"])
         if not np.isfinite(mjd_avg) or mjd_avg <= 0:
-            errors.append(f"MJD-AVG must be a finite positive number; received {mjd_avg}.")
+            msg = f"MJD-AVG must be a finite positive number; received {mjd_avg}."
+            errors.append(msg)
+            structural_errors.append(msg)
     except Exception:
-        errors.append("IMAGE header is missing a valid MJD-AVG value.")
+        msg = "IMAGE header is missing a valid MJD-AVG value."
+        errors.append(msg)
+        structural_errors.append(msg)
 
     # IMAGE / VARIANCE / ZODI arrays --------------------------------------
     variance_array = None
@@ -221,7 +358,9 @@ def validate_image_payload(
     if variance is None:
         extension_reports["VARIANCE"] = {"present": False, "valid": False}
         if require_full_product:
-            errors.append("Required VARIANCE extension is missing or has no data.")
+            msg = "Required VARIANCE extension is missing or has no data."
+            errors.append(msg)
+            structural_errors.append(msg)
     else:
         try:
             variance_array = np.asarray(variance)
@@ -239,7 +378,9 @@ def validate_image_payload(
                 finite_variance_values = variance_array[variance_finite]
                 variance_zero_count = int(np.count_nonzero(finite_variance_values == 0))
                 variance_negative_count = int(np.count_nonzero(finite_variance_values < 0))
-                if variance_finite_fraction < 1.0:
+                if not variance_finite.any():
+                    variance_errors.append("VARIANCE contains no finite pixels.")
+                elif variance_finite_fraction < 1.0:
                     variance_warnings.append("VARIANCE contains non-finite pixels.")
                 if variance_zero_count:
                     variance_warnings.append(
@@ -263,6 +404,7 @@ def validate_image_payload(
                             "IMAGE and VARIANCE non-finite masks differ; construct a joint validity mask before uncertainty-aware processing."
                         )
             errors.extend(variance_errors)
+            structural_errors.extend(variance_errors)
             warnings.extend(variance_warnings)
             extension_reports["VARIANCE"] = {
                 "present": True,
@@ -277,13 +419,17 @@ def validate_image_payload(
                 "warnings": variance_warnings,
             }
         except Exception as exc:
-            errors.append(f"VARIANCE data could not be interpreted: {type(exc).__name__}: {exc}")
+            msg = f"VARIANCE data could not be interpreted: {type(exc).__name__}: {exc}"
+            errors.append(msg)
+            structural_errors.append(msg)
             extension_reports["VARIANCE"] = {"present": True, "valid": False}
 
     if zodi is None:
         extension_reports["ZODI"] = {"present": False, "valid": False}
         if require_full_product:
-            errors.append("Required ZODI extension is missing or has no data.")
+            msg = "Required ZODI extension is missing or has no data."
+            errors.append(msg)
+            structural_errors.append(msg)
     else:
         try:
             zodi_array = np.asarray(zodi)
@@ -303,6 +449,7 @@ def validate_image_payload(
             if finite_fraction is not None and finite_fraction < 1.0:
                 zodi_warnings.append("ZODI contains non-finite pixels.")
             errors.extend(zodi_errors)
+            structural_errors.extend(zodi_errors)
             warnings.extend(zodi_warnings)
             extension_reports["ZODI"] = {
                 "present": True,
@@ -314,7 +461,9 @@ def validate_image_payload(
                 "warnings": zodi_warnings,
             }
         except Exception as exc:
-            errors.append(f"ZODI data could not be interpreted: {type(exc).__name__}: {exc}")
+            msg = f"ZODI data could not be interpreted: {type(exc).__name__}: {exc}"
+            errors.append(msg)
+            structural_errors.append(msg)
             extension_reports["ZODI"] = {"present": True, "valid": False}
 
     # EPSF capability extension ------------------------------------------
@@ -434,6 +583,13 @@ def validate_image_payload(
         )
 
     valid = not errors
+    structurally_valid = not structural_errors
+    numerically_valid = not numerical_errors and bool(
+        image_finite_fraction is not None and image_finite_fraction > 0.0
+    )
+    variance_ok = extension_reports.get("VARIANCE", {}).get("valid", False)
+    zodi_ok = extension_reports.get("ZODI", {}).get("valid", False)
+
     return {
         "valid": valid,
         "status": "valid" if valid else "invalid",
@@ -450,9 +606,46 @@ def validate_image_payload(
         "flags_shape": flags_shape,
         "quality_flags_decoded": bool(flag_report["decoded"]),
         "flag_definitions": flag_report["definitions"],
+        "any_flagged_pixels": flag_report["any_flagged_pixels"],
+        "any_flagged_fraction": flag_report["any_flagged_fraction"],
+        "non_astrophysical_flagged_pixels": flag_report["non_astrophysical_flagged_pixels"],
+        "non_astrophysical_flagged_fraction": flag_report["non_astrophysical_flagged_fraction"],
+        "non_astrophysical_bitmask": flag_report["non_astrophysical_bitmask"],
         "active_bits_without_definitions": flag_report["active_bits_without_definitions"],
         "image_variance_mask_consistency": mask_consistency,
         "extensions": extension_reports,
         "wcs_valid": wcs_valid,
+        "structural_validity": {
+            "valid": structurally_valid,
+            "errors": structural_errors,
+        },
+        "numerical_validity": {
+            "valid": numerically_valid,
+            "errors": numerical_errors,
+            "image_finite_fraction": round(image_finite_fraction, 6) if image_finite_fraction is not None else None,
+            "variance_finite_fraction": round(variance_finite_fraction, 6) if variance_finite_fraction is not None else None,
+            "variance_zero_count": variance_zero_count,
+            "variance_negative_count": variance_negative_count,
+        },
+        "alignment_validity": {
+            "wcs_valid": wcs_valid,
+            "reprojection_eligible": bool(structurally_valid and numerically_valid and wcs_valid),
+        },
+        "scientific_operation_suitability": {
+            "visual_display": bool(valid and numerically_valid),
+            "background_estimation": bool(valid and numerically_valid),
+            "epoch_coadd": bool(valid and numerically_valid and wcs_valid),
+            "difference_imaging": bool(valid and numerically_valid and wcs_valid),
+            "uncertainty_weighted_photometry": bool(
+                valid
+                and numerically_valid
+                and wcs_valid
+                and variance_ok
+                and (variance_negative_count or 0) == 0
+            ),
+            "zodi_background_subtraction": bool(valid and zodi_ok),
+            "psf_fitting": bool(valid and wcs_valid and epsf_report.get("valid", False)),
+            "wavelength_lookup": bool(valid and wave_report.get("valid", False)),
+        },
         "flag_mask_policy": "none_applied; operation_specific_policy_required",
     }

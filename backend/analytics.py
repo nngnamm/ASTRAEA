@@ -1,16 +1,78 @@
+import logging
 import numpy as np
 from scipy.ndimage import binary_erosion, gaussian_filter, maximum_filter
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astroquery.ipac.irsa import Irsa
-from config import TARGETS
+from config import DEFAULT_REFERENCE_MJD, TARGETS
+from image_validation import (
+    ASTROPHYSICAL_FLAG_NAMES,
+    DEFAULT_NON_ASTROPHYSICAL_DEFECT_BITMASK,
+    build_operation_flag_mask,
+)
 from spherex_core import propagate_coords
 
-_ASTROPHYSICAL_FLAG_NAMES = {"SOURCE", "TRANSIENT"}
+logger = logging.getLogger(__name__)
+_ASTROPHYSICAL_FLAG_NAMES = ASTROPHYSICAL_FLAG_NAMES
+
+
+def _frame_non_astrophysical_defect_fraction(frame: dict) -> float:
+    """Compute the fraction of pixels carrying at least one non-astrophysical defect flag.
+
+    Uses the exact pixelwise bitwise union of non-astrophysical flag bits whenever
+    a 2-D integer ``flags`` bitmap or precomputed ``non_astrophysical_flagged_fraction``
+    is present, preventing double-counting when a pixel carries multiple flags.
+    """
+    validation = frame.get("validation") or {}
+    precomputed = validation.get("non_astrophysical_flagged_fraction")
+    if precomputed is not None and np.isfinite(float(precomputed)):
+        return float(np.clip(float(precomputed), 0.0, 1.0))
+
+    defs = validation.get("flag_definitions") or []
+    flags = frame.get("flags")
+
+    if flags is not None:
+        flag_arr = np.asarray(flags)
+        if flag_arr.ndim == 2 and flag_arr.size > 0 and np.issubdtype(flag_arr.dtype, np.integer):
+            if np.any(flag_arr != 0):
+                defect_mask = build_operation_flag_mask(
+                    flag_arr, defs if defs else None, operation="detector_defects_only"
+                )
+                if defect_mask is not None:
+                    return float(np.mean(defect_mask))
+                flags_u32 = flag_arr.astype(np.uint32, copy=False)
+                return float(
+                    np.mean(
+                        (flags_u32 & np.uint32(DEFAULT_NON_ASTROPHYSICAL_DEFECT_BITMASK))
+                        != 0
+                    )
+                )
+            # If flags array is all zeros and no definitions report non-zero fractions,
+            # the defect fraction is 0.0.
+            if not defs:
+                return 0.0
+
+    if defs:
+        # Fallback for synthetic unit-test fixtures that supply only summary
+        # flag_definitions without populating bits in the flags array.
+        defect_fraction = sum(
+            float(d.get("flagged_fraction") or 0.0)
+            for d in defs
+            if str(d.get("name", "")).strip().upper() not in _ASTROPHYSICAL_FLAG_NAMES
+        )
+        return float(np.clip(defect_fraction, 0.0, 1.0))
+
+    return 0.0
 
 
 def compute_sky_health(cube):
-    """Transparent, formula-defined Sky Health Index (Blueprint Group II #3)."""
+    """Transparent, formula-defined Sky Health Index (experimental heuristic).
+
+    Combines spatial coverage on the reprojected grid (50%), bitwise-union
+    cleanliness from non-astrophysical detector flags (30%), and temporal baseline
+    coverage relative to a 180-day reference span (20%). Explicitly labeled as an
+    experimental engineering heuristic and not an official NASA SPHEREx metric.
+    """
     frames = cube.get("frames", [])
     if not frames:
         return None
@@ -18,34 +80,16 @@ def compute_sky_health(cube):
     aligned_stack = np.array([np.asarray(f["aligned"], dtype=float) for f in frames])
     valid_coverage = float(np.isfinite(aligned_stack).mean() * 100.0)
 
-    per_frame_clean_pct = []
-    for f in frames:
-        defs = (f.get("validation") or {}).get("flag_definitions") or []
-        if defs:
-            defect_fraction = sum(
-                float(d.get("flagged_fraction") or 0.0)
-                for d in defs
-                if str(d.get("name", "")).strip().upper() not in _ASTROPHYSICAL_FLAG_NAMES
-            )
-            defect_fraction = min(1.0, max(0.0, defect_fraction))
-            per_frame_clean_pct.append((1.0 - defect_fraction) * 100.0)
+    per_frame_clean_pct = [
+        (1.0 - _frame_non_astrophysical_defect_fraction(f)) * 100.0 for f in frames
+    ]
+    clean_detector_pct = (
+        float(np.mean(per_frame_clean_pct)) if per_frame_clean_pct else 100.0
+    )
 
-    if per_frame_clean_pct:
-        clean_detector_pct = float(np.mean(per_frame_clean_pct))
-    else:
-        flag_arrays = [
-            np.asarray(f["flags"]).ravel()
-            for f in frames
-            if f.get("flags") is not None
-        ]
-        if flag_arrays:
-            raw_flags = np.concatenate(flag_arrays)
-            clean_detector_pct = float(((raw_flags & 31) == 0).mean() * 100.0)
-        else:
-            clean_detector_pct = 100.0
-
-    mjd_span = float(frames[-1]["time"] - frames[0]["time"]) if len(frames) > 1 else 0.0
-    time_baseline_score = min(100.0, (mjd_span / 180.0) * 100.0)
+    times = sorted(float(f["time"]) for f in frames if "time" in f)
+    mjd_span = float(times[-1] - times[0]) if len(times) > 1 else 0.0
+    time_baseline_score = min(100.0, max(0.0, (mjd_span / 180.0) * 100.0))
 
     health_score = (
         0.50 * valid_coverage + 0.30 * clean_detector_pct + 0.20 * time_baseline_score
@@ -65,10 +109,22 @@ def compute_sky_health(cube):
         "time_baseline_days": round(mjd_span, 1),
         "n_frames": len(frames),
         "formula": "0.50*valid_coverage_pct + 0.30*clean_detector_pct + 0.20*min(100, baseline_days/180*100)",
+        "weights": {
+            "valid_coverage": 0.50,
+            "clean_detector_flags": 0.30,
+            "temporal_baseline": 0.20,
+        },
+        "flag_aggregation_method": "bitwise_union_non_astrophysical_defects",
         "experimental_heuristic": True,
+        "official_nasa_metric": False,
         "provenance_note": (
-            "Derived heuristic index combining spatial coverage, non-source flag cleanliness, "
-            "and temporal baseline; not an official NASA SPHEREx quality metric."
+            "Derived heuristic index combining spatial coverage, bitwise-union non-source "
+            "flag cleanliness, and temporal baseline; not an official NASA SPHEREx quality metric."
+        ),
+        "limitations": (
+            "Component weights (0.50/0.30/0.20) and the 180-day baseline saturation scale "
+            "are engineering heuristics for quick-look triage and are not calibrated against "
+            "mission science requirements."
         ),
     }
 
@@ -80,8 +136,14 @@ def get_catalog_overlay(ra, dec, fov_deg, grid_wcs, n_grid, max_sources=50):
         tbl = Irsa.query_region(
             coordinates=coord, catalog="allwise_p3as_psd", radius=(fov_deg / 2.0) * u.deg
         )
-    except Exception as e:
-        print("Catalog query failed:", str(e)[:60])
+    except Exception as exc:
+        logger.warning(
+            "AllWISE catalog query failed for ra=%.5f dec=%.5f fov=%.4f: %s",
+            ra,
+            dec,
+            fov_deg,
+            exc,
+        )
         return []
 
     if len(tbl) == 0:
@@ -113,11 +175,24 @@ def get_catalog_overlay(ra, dec, fov_deg, grid_wcs, n_grid, max_sources=50):
     return sources
 
 
-def _classify_candidate(cx, cy, shift_px, snr_combined, z_thresh, grid_wcs, cat_coords, catalog_sources):
+def _classify_candidate(
+    cx,
+    cy,
+    shift_px,
+    snr_combined,
+    z_thresh,
+    grid_wcs,
+    cat_coords,
+    catalog_sources,
+    reference_mjd=DEFAULT_REFERENCE_MJD,
+):
     sky = grid_wcs.pixel_to_world(cx, cy)
 
     classification = "Anomaly Candidate"
+    association_type = "unassociated_candidate"
     matched_id = None
+    matched_sep_arcsec = None
+
     for t_info in TARGETS.values():
         tr_ra, tr_dec = propagate_coords(
             t_info["ra"],
@@ -125,13 +200,18 @@ def _classify_candidate(cx, cy, shift_px, snr_combined, z_thresh, grid_wcs, cat_
             t_info["pm_ra_arcsec_yr"],
             t_info["pm_dec_arcsec_yr"],
             t_info["epoch"],
+            to_mjd=float(reference_mjd),
         )
         sep_arcsec = float(
             sky.separation(SkyCoord(tr_ra * u.deg, tr_dec * u.deg)).arcsec
         )
         if sep_arcsec < 12.0:
-            classification = f"Confirmed Benchmark Object ({t_info['name']})"
+            classification = (
+                f"Benchmark Coordinate Match — Unconfirmed ({t_info['name']})"
+            )
+            association_type = "benchmark_coordinate_match_unconfirmed"
             matched_id = t_info["name"]
+            matched_sep_arcsec = round(sep_arcsec, 3)
             break
 
     if matched_id is None and cat_coords is not None and len(cat_coords) > 0:
@@ -139,14 +219,26 @@ def _classify_candidate(cx, cy, shift_px, snr_combined, z_thresh, grid_wcs, cat_
         min_idx = int(np.argmin(seps))
         if float(seps[min_idx]) < 6.5:
             matched_id = catalog_sources[min_idx]["id"]
+            matched_sep_arcsec = round(float(seps[min_idx]), 3)
+            association_type = "catalog_cross_match"
             if shift_px == 0.0:
-                classification = f"Known Object ({matched_id})"
+                classification = (
+                    f"Catalog Coordinate Match — Unconfirmed ({matched_id})"
+                )
 
     conf = round(
         float(min(0.95, max(0.15, (snr_combined - z_thresh) / 20.0 + 0.50))), 2
     )
     status = "High Priority Review" if snr_combined >= 8.0 else "Candidate - Review"
-    return sky, classification, matched_id, conf, status
+    return (
+        sky,
+        classification,
+        association_type,
+        matched_id,
+        matched_sep_arcsec,
+        conf,
+        status,
+    )
 
 
 def detect_anomalies(
@@ -157,9 +249,16 @@ def detect_anomalies(
     catalog_sources=None,
     z_thresh=4.5,
     border=5,
+    reference_mjd=DEFAULT_REFERENCE_MJD,
 ):
-    """
-    Unsupervised Difference Blob Detector + Catalog Cross-Matcher + Uncertainty-Aware Ranking.
+    """Unsupervised difference-image peak/dipole detector with coordinate cross-matching.
+
+    Scientific integrity guarantees:
+    - Never labels a spatial coincidence as a "Confirmed" object; benchmark or catalog
+      proximity is reported as ``Benchmark Coordinate Match — Unconfirmed`` with
+      ``independent_confirmation=False`` and ``human_reviewed=False``.
+    - ``confidence`` / ``anomaly_score`` is a bounded heuristic SNR ranking score and
+      carries ``is_calibrated_probability=False``.
     """
     diff_arr = np.asarray(diff_img, dtype=float)
     early_arr = np.asarray(img_early, dtype=float)
@@ -177,7 +276,7 @@ def detect_anomalies(
     filled_diff = np.where(valid_mask, diff_arr, raw_med)
     sm_diff = gaussian_filter(filled_diff, sigma=0.8)
 
-    # Local sky noise strictly from finite pixels inside valid_mask
+    # Local sky noise strictly from finite pixels inside eroded valid_mask
     finite_vals = sm_diff[eroded_mask]
     med = float(np.median(finite_vals))
     sigma_sky = float(1.4826 * np.median(np.abs(finite_vals - med))) + 1e-12
@@ -216,7 +315,7 @@ def detect_anomalies(
     used_neg = set()
     candidates = []
     score_disclaimer = (
-        "Heuristic SNR ranking score; does not represent the probability of a new astrophysical object."
+        "Heuristic SNR ranking score; does not represent a calibrated probability of a new astrophysical object."
     )
 
     for py, px in pos_yx:
@@ -246,8 +345,24 @@ def detect_anomalies(
             flux_dir = "brightening"
             shift_px = 0.0
 
-        sky, classification, matched_id, conf, status = _classify_candidate(
-            cx, cy, shift_px, snr_combined, z_thresh, grid_wcs, cat_coords, catalog_sources
+        (
+            sky,
+            classification,
+            association_type,
+            matched_id,
+            matched_sep_arcsec,
+            conf,
+            status,
+        ) = _classify_candidate(
+            cx,
+            cy,
+            shift_px,
+            snr_combined,
+            z_thresh,
+            grid_wcs,
+            cat_coords,
+            catalog_sources,
+            reference_mjd=reference_mjd,
         )
 
         candidates.append(
@@ -255,7 +370,11 @@ def detect_anomalies(
                 "type": cand_type,
                 "flux_change_direction": flux_dir,
                 "classification": classification,
+                "association_type": association_type,
                 "matched_catalog_id": matched_id,
+                "matched_separation_arcsec": matched_sep_arcsec,
+                "independent_confirmation": False,
+                "human_reviewed": False,
                 "x_px": round(float(cx), 2),
                 "y_px": round(float(cy), 2),
                 "ra": round(float(sky.ra.deg), 6),
@@ -264,6 +383,7 @@ def detect_anomalies(
                 "shift_px": shift_px,
                 "anomaly_score": conf,
                 "confidence": conf,
+                "is_calibrated_probability": False,
                 "experimental_heuristic": True,
                 "score_disclaimer": score_disclaimer,
                 "status": status,
@@ -277,15 +397,35 @@ def detect_anomalies(
         cy, cx = float(ny), float(nx)
         cand_type = "Variable Source Candidate (Fading)"
         shift_px = 0.0
-        sky, classification, matched_id, conf, status = _classify_candidate(
-            cx, cy, shift_px, z_neg, z_thresh, grid_wcs, cat_coords, catalog_sources
+        (
+            sky,
+            classification,
+            association_type,
+            matched_id,
+            matched_sep_arcsec,
+            conf,
+            status,
+        ) = _classify_candidate(
+            cx,
+            cy,
+            shift_px,
+            z_neg,
+            z_thresh,
+            grid_wcs,
+            cat_coords,
+            catalog_sources,
+            reference_mjd=reference_mjd,
         )
         candidates.append(
             {
                 "type": cand_type,
                 "flux_change_direction": "fading",
                 "classification": classification,
+                "association_type": association_type,
                 "matched_catalog_id": matched_id,
+                "matched_separation_arcsec": matched_sep_arcsec,
+                "independent_confirmation": False,
+                "human_reviewed": False,
                 "x_px": round(float(cx), 2),
                 "y_px": round(float(cy), 2),
                 "ra": round(float(sky.ra.deg), 6),
@@ -294,6 +434,7 @@ def detect_anomalies(
                 "shift_px": shift_px,
                 "anomaly_score": conf,
                 "confidence": conf,
+                "is_calibrated_probability": False,
                 "experimental_heuristic": True,
                 "score_disclaimer": score_disclaimer,
                 "status": status,

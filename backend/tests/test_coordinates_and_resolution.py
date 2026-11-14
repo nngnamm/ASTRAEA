@@ -5,10 +5,12 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 from fastapi.testclient import TestClient
 
-from config import TARGETS
+from config import DEFAULT_REFERENCE_EPOCH_JYEAR, DEFAULT_REFERENCE_MJD, TARGETS
 from main import app
+import spherex_core
 from spherex_core import (
     propagate_coords,
+    propagate_coords_with_metadata,
     resolve_object_name,
     validate_query_parameters,
 )
@@ -51,6 +53,24 @@ def test_propagate_coords_exact_spherical_space_motion():
     )
     assert np.isclose(ra_b, 269.446294, atol=1e-5)
     assert np.isclose(dec_b, 4.767881, atol=1e-5)
+
+
+def test_propagate_coords_default_epoch_is_exact_j2026_not_mjd_61000():
+    # J2026.0 is MJD 61041.0 (2026-01-01T00:00:00.000 UTC), 41 days after MJD 61000.0
+    assert np.isclose(float(Time(2026.0, format="jyear").mjd), DEFAULT_REFERENCE_MJD)
+    meta = propagate_coords_with_metadata(
+        TARGETS["barnard"]["ra"],
+        TARGETS["barnard"]["dec"],
+        TARGETS["barnard"]["pm_ra_arcsec_yr"],
+        TARGETS["barnard"]["pm_dec_arcsec_yr"],
+        epoch0=2000.0,
+    )
+    assert meta["propagated_to_mjd"] == 61041.0
+    assert meta["propagated_epoch_jyear"] == DEFAULT_REFERENCE_EPOCH_JYEAR == 2026.0
+    assert meta["pm_convention"] == "pm_ra_cosdec"
+    assert meta["proper_motion_applied"] is True
+    # At J2026.0, Barnard's Star is ~1.16 arcsec further North than at MJD 61000.0
+    assert meta["dec"] > 4.7681
 
 
 def test_validate_query_parameters_accepts_decimal_and_sexagesimal():
@@ -118,8 +138,23 @@ def test_resolve_object_name_benchmark_catalog_offline(
     assert resolved["resolved_name"] == expected_name
     assert resolved["source"] == "nasa_benchmark_catalog"
     assert resolved["benchmark_target"] is True
+    assert resolved["pm_convention"] == "pm_ra_cosdec"
+    assert resolved["proper_motion_applied"] is True
     assert 0.0 <= resolved["ra"] < 360.0
     assert -90.0 <= resolved["dec"] <= 90.0
+
+
+def test_resolve_object_name_sesame_fallback_does_not_apply_proper_motion_twice(monkeypatch):
+    monkeypatch.setattr(
+        spherex_core.SkyCoord,
+        "from_name",
+        lambda name: SkyCoord(10.684708 * u.deg, 41.26875 * u.deg, frame="icrs"),
+    )
+    resolved = resolve_object_name("M31", allow_external=True)
+    assert resolved["source"] == "astropy_sesame"
+    assert resolved["benchmark_target"] is False
+    assert resolved["proper_motion_applied"] is False
+    assert resolved["propagated_to_mjd"] is None
 
 
 def test_resolve_object_name_unknown_and_empty_handling():
@@ -154,9 +189,14 @@ def test_fastapi_search_and_validation_endpoints():
     assert resp_coord.status_code == 200
     body_coord = resp_coord.json()
     assert body_coord["valid"] is True
+    assert body_coord["operation"] == "coordinate_validation_and_benchmark_lookup"
+    assert body_coord["irsa_queried"] is False
+    assert body_coord["data_availability_checked"] is False
     assert np.isclose(body_coord["ra"], 133.795129, atol=1e-5)
     assert np.isclose(body_coord["dec"], -7.245147, atol=1e-5)
     assert body_coord["nearby_benchmark_target"]["target_key"] == "wise0855"
+    assert body_coord["nearby_benchmark_target"]["propagated_epoch_jyear"] == 2026.0
+    assert body_coord["nearby_benchmark_target"]["propagated_to_mjd"] == 61041.0
 
     for bad_params in (
         {"ra": 365.0, "dec": 4.7},

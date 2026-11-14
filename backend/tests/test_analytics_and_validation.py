@@ -43,13 +43,53 @@ def test_compute_sky_health_does_not_penalize_source_flags():
     }
     health = compute_sky_health(cube)
     assert health["experimental_heuristic"] is True
+    assert health["official_nasa_metric"] is False
     assert health["clean_detector_pct"] == 100.0
     assert health["valid_coverage_pct"] == 100.0
     assert health["score_pct"] == 100.0
     assert "not an official NASA SPHEREx quality metric" in health["provenance_note"]
 
 
-def test_detect_anomalies_identifies_dipole_brightening_and_fading():
+def test_compute_sky_health_does_not_double_count_overlapping_defect_flags_and_sorts_times():
+    aligned = np.ones((10, 10), dtype=float)
+    flags = np.zeros((10, 10), dtype=np.int32)
+    # Exactly 10 of 100 pixels (10%) carry THREE defect bits simultaneously (bits 1, 6, 7)
+    # plus 50 pixels carry SOURCE (bit 21).
+    flags[0, :] = (1 << 1) | (1 << 6) | (1 << 7) | (1 << 21)
+    flags[1:5, :] = 1 << 21
+
+    defs = [
+        {"bit": 1, "name": "OVERFLOW", "flagged_fraction": 0.10},
+        {"bit": 6, "name": "NONFUNC", "flagged_fraction": 0.10},
+        {"bit": 7, "name": "OUTLIER", "flagged_fraction": 0.10},
+        {"bit": 21, "name": "SOURCE", "flagged_fraction": 0.50},
+    ]
+
+    # Also pass frames in reverse time order to verify time sorting
+    cube = {
+        "frames": [
+            {
+                "time": 61080.0,
+                "aligned": aligned,
+                "flags": flags,
+                "validation": {"flag_definitions": defs},
+            },
+            {
+                "time": 60900.0,
+                "aligned": aligned,
+                "flags": flags,
+                "validation": {"flag_definitions": defs},
+            },
+        ]
+    }
+    health = compute_sky_health(cube)
+    # True non-astrophysical defect union is 10% -> clean_detector_pct must be 90.0%, NOT 70.0%
+    assert health["clean_detector_pct"] == 90.0
+    assert health["time_baseline_days"] == 180.0
+    assert health["flag_aggregation_method"] == "bitwise_union_non_astrophysical_defects"
+
+
+def test_detect_anomalies_identifies_dipole_brightening_and_fading_and_uses_unconfirmed_labels():
     coord = SkyCoord(269.446294 * u.deg, 4.767881 * u.deg, frame="icrs")
     grid, n = make_grid(coord, fov_deg=0.1, pix_arcsec=6.0)
     rng = np.random.default_rng(42)
@@ -57,9 +97,9 @@ def test_detect_anomalies_identifies_dipole_brightening_and_fading():
     img_early = rng.normal(0.0, 0.02, size=(n, n))
     img_late = rng.normal(0.0, 0.02, size=(n, n))
 
-    # 1. Moving dipole near (30, 30) -> (33, 30)
-    img_early[30, 30] += 8.0
-    img_late[33, 30] += 8.0
+    # 1. Moving dipole near center (Barnard's Star coordinate) (28, 29) -> (31, 29)
+    img_early[28, 29] += 8.0
+    img_late[31, 29] += 8.0
 
     # 2. Brightening variable at (15, 45)
     img_late[15, 45] += 7.0
@@ -68,12 +108,22 @@ def test_detect_anomalies_identifies_dipole_brightening_and_fading():
     img_early[45, 15] += 7.0
 
     diff = img_late - img_early
-    candidates = detect_anomalies(diff, img_early, img_late, grid, z_thresh=4.5, border=5)
+    candidates = detect_anomalies(
+        diff, img_early, img_late, grid, z_thresh=4.5, border=5, reference_mjd=61000.0
+    )
 
     types = {c["type"] for c in candidates}
     assert "Moving Object Candidate" in types
     assert "Variable Source Candidate (Brightening)" in types
     assert "Variable Source Candidate (Fading)" in types
+
+    moving = next(c for c in candidates if c["type"] == "Moving Object Candidate")
+    assert moving["classification"] == "Benchmark Coordinate Match — Unconfirmed (Barnard's Star)"
+    assert "Confirmed" not in moving["classification"]
+    assert moving["association_type"] == "benchmark_coordinate_match_unconfirmed"
+    assert moving["independent_confirmation"] is False
+    assert moving["human_reviewed"] is False
+    assert moving["is_calibrated_probability"] is False
 
     for c in candidates:
         assert c["experimental_heuristic"] is True
@@ -121,7 +171,7 @@ def test_candidates_endpoint_returns_structured_payload(monkeypatch):
                 "aligned": early_img,
                 "normalized": early_img,
                 "flags": np.zeros((n, n), dtype=np.int32),
-                "collection": "spherex_qr2",
+                "collection": "spherex_dr1",
                 "metadata": {"observation": {"observation_id": "OBS-E"}},
                 "validation": {},
             },
@@ -132,7 +182,7 @@ def test_candidates_endpoint_returns_structured_payload(monkeypatch):
                 "aligned": late_img,
                 "normalized": late_img,
                 "flags": np.zeros((n, n), dtype=np.int32),
-                "collection": "spherex_qr2",
+                "collection": "spherex_qr3",
                 "metadata": {"observation": {"observation_id": "OBS-L"}},
                 "validation": {},
             },

@@ -5,6 +5,7 @@ from astropy.wcs import WCS
 from spherex_core import (
     align_frame_to_grid,
     compute_reference_pixel_scale,
+    evaluate_cross_frame_registration,
     make_grid,
 )
 
@@ -102,3 +103,33 @@ def test_partial_footprint_edge_cutout_aligns_and_preserves_nans():
     uncovered = ~frame["valid_mask"]
     assert np.any(uncovered)
     assert np.all(np.isnan(frame["aligned"][uncovered]))
+
+
+def test_evaluate_cross_frame_registration_empirically_validates_and_handles_empty_sky():
+    rng = np.random.default_rng(99)
+    img1 = rng.normal(0.0, 0.05, size=(25, 25))
+    img2 = rng.normal(0.0, 0.05, size=(25, 25))
+    img1[12, 12] += 15.0
+    img2[12, 12] += 15.0
+
+    frames_with_star = [
+        {"detector": 5, "time": 60900.0, "aligned": img1, "normalized": img1},
+        {"detector": 5, "time": 60901.0, "aligned": img2, "normalized": img2},
+    ]
+    reg_ok = evaluate_cross_frame_registration(frames_with_star, pix_arcsec=6.15)
+    assert reg_ok["status"] == "empirically_validated"
+    assert reg_ok["independent_astrometric_validation"] is True
+    assert reg_ok["intra_epoch_centroid_rms_px"] < 0.25
+
+    # Pure noise frames with no reference source must explicitly report incomplete_no_reference_sources
+    noise1 = rng.normal(0.0, 0.05, size=(25, 25))
+    noise2 = rng.normal(0.0, 0.05, size=(25, 25))
+    frames_no_star = [
+        {"detector": 5, "time": 60900.0, "aligned": noise1, "normalized": noise1},
+        {"detector": 5, "time": 60901.0, "aligned": noise2, "normalized": noise2},
+    ]
+    reg_incomplete = evaluate_cross_frame_registration(
+        frames_no_star, pix_arcsec=6.15, snr_threshold=10.0
+    )
+    assert reg_incomplete["status"] == "incomplete_no_reference_sources"
+    assert reg_incomplete["independent_astrometric_validation"] is False
